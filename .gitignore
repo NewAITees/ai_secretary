@@ -41,7 +41,9 @@ htmlcov/
 dmypy.json
 
 # Audio output files
+# Generated audio outputs
 output/
+outputs/
 *.wav
 
 # Debug and test scripts (temporary)

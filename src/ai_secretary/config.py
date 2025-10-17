@@ -24,6 +24,10 @@ class Config:
     log_level: str = "INFO"
     log_file: str = "logs/ai_secretary.log"
 
+    # COEIROINK設定
+    coeiroink_api_url: str = "http://localhost:50032"
+    audio_output_dir: str = "outputs/audio"
+
     # AI生成設定
     max_tokens: int = 4096
     temperature: float = 0.7
@@ -40,4 +44,6 @@ class Config:
             max_tokens=int(os.getenv("MAX_TOKENS", "4096")),
             temperature=float(os.getenv("TEMPERATURE", "0.7")),
             system_prompt=os.getenv("SYSTEM_PROMPT"),
+            coeiroink_api_url=os.getenv("COEIROINK_API_URL", "http://localhost:50032"),
+            audio_output_dir=os.getenv("AUDIO_OUTPUT_DIR", "outputs/audio"),
         )

@@ -332,6 +332,7 @@ class COEIROINKClient:
         style_name: str = None,
         parameters: VoiceParameters = None,
         use_prosody: bool = False,
+        prosody_detail: Optional[List[List[Dict]]] = None,
         output_path: Optional[Path] = None
     ) -> bytes:
         """
@@ -342,7 +343,8 @@ class COEIROINKClient:
             speaker_name: スピーカー名
             style_name: スタイル名(Noneの場合は最初のスタイル)
             parameters: 音声パラメータ
-            use_prosody: 韻律情報を使用するか
+            use_prosody: 韻律情報を自動推定して使用するか
+            prosody_detail: 事前に用意された韻律情報（Noneの場合は未指定）
             output_path: 保存先パス(Noneの場合は保存しない)
 
         Returns:
@@ -369,10 +371,13 @@ class COEIROINKClient:
             logger.warning("パラメータに問題がありますが、続行します")
 
         # 韻律情報取得(オプション)
-        prosody_detail = []
-        if use_prosody:
-            prosody_detail = self.estimate_prosody(text)
-            logger.info("韻律情報を使用します")
+        prosody_payload: List[List[Dict]] = []
+        if prosody_detail is not None:
+            prosody_payload = prosody_detail
+            logger.info("事前計算された韻律情報を使用します")
+        elif use_prosody:
+            prosody_payload = self.estimate_prosody(text)
+            logger.info("韻律情報を自動推定して使用します")
 
         # リクエスト作成
         request = SynthesisRequest(
@@ -380,7 +385,7 @@ class COEIROINKClient:
             style_id=style_id,
             text=text,
             parameters=parameters,
-            prosody_detail=prosody_detail
+            prosody_detail=prosody_payload
         )
 
         # API呼び出し
