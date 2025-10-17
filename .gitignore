@@ -39,3 +39,12 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Audio output files
+output/
+*.wav
+
+# Debug and test scripts (temporary)
+debug_*.py
+test_*_synthesis.py
+test_*_ranges.py
