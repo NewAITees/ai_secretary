@@ -38,6 +38,7 @@ cd ai_secretary
 uv sync
 npm install --prefix frontend
 ```
+   - 追加のPythonライブラリが必要な場合は `uv add <package_name>` を利用してください。
 
 3. 環境変数の設定
 ```bash
