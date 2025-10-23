@@ -40,6 +40,9 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+# UV lock file (generated, large)
+uv.lock
+
 # Audio output files
 # Generated audio outputs
 output/
