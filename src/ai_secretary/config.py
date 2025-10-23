@@ -18,7 +18,7 @@ class Config:
 
     # Ollama設定
     ollama_host: str = "http://localhost:11434"
-    model_name: str = "llama3.1:8b"
+    model_name: str = "qwen3:8b"
 
     # ログ設定
     log_level: str = "INFO"
@@ -38,7 +38,7 @@ class Config:
         """環境変数から設定を読み込む"""
         return cls(
             ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-            model_name=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
+            model_name=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "logs/ai_secretary.log"),
             max_tokens=int(os.getenv("MAX_TOKENS", "4096")),

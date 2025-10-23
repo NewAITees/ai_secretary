@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -22,8 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backend-port",
         type=int,
-        default=8000,
-        help="Port for the FastAPI server (default: 8000)",
+        default=8001,
+        help="Port for the FastAPI server (default: 8001)",
     )
     parser.add_argument(
         "--frontend-port",
@@ -51,6 +52,7 @@ async def spawn_process(
     command: List[str],
     prefix: str,
     cwd: Path,
+    env: dict = None,
 ) -> Tuple[asyncio.subprocess.Process, Iterable[asyncio.Task[None]]]:
     """Spawn a subprocess and start background tasks for streaming output."""
     process = await asyncio.create_subprocess_exec(
@@ -58,6 +60,7 @@ async def spawn_process(
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
 
     stdout_task = asyncio.create_task(stream_output(process.stdout, prefix))
@@ -113,8 +116,12 @@ async def main_async(args: argparse.Namespace) -> int:
 
     frontend_cmd = ["npm", "run", "dev", "--", "--port", str(args.frontend_port)]
 
+    # Set environment variable for Vite to read backend port
+    frontend_env = os.environ.copy()
+    frontend_env["VITE_BACKEND_PORT"] = str(args.backend_port)
+
     backend_proc, backend_tasks = await spawn_process(backend_cmd, "backend", ROOT_DIR)
-    frontend_proc, frontend_tasks = await spawn_process(frontend_cmd, "frontend", FRONTEND_DIR)
+    frontend_proc, frontend_tasks = await spawn_process(frontend_cmd, "frontend", FRONTEND_DIR, env=frontend_env)
 
     stop_event = asyncio.Event()
 
