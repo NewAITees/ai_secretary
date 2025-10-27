@@ -48,8 +48,8 @@ class AISecretary:
 
         # Ollamaクライアントの初期化
         self.ollama_client = ollama_client or OllamaClient(
-            host=self.config.ollama_host,
-            model=self.config.model_name,
+            host=self.config.ollama.host,
+            model=self.config.ollama.model,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
@@ -101,6 +101,7 @@ class AISecretary:
         user_message: str,
         return_json: bool = False,
         play_audio: bool = True,
+        model: Optional[str] = None,
     ) -> Any:
         """
         ユーザーメッセージに対して応答
@@ -109,12 +110,18 @@ class AISecretary:
             user_message: ユーザーからのメッセージ
             return_json: JSON形式で応答を返すか（デフォルト: False、テキストのみ返す）
             play_audio: 生成した音声を即時再生するか
+            model: 使用するモデル名（Noneの場合はデフォルトモデルを使用）
 
         Returns:
             AI秘書からの応答（辞書形式またはテキスト）
         """
         # ユーザーメッセージを履歴に追加
         self.conversation_history.append({"role": "user", "content": user_message})
+
+        # モデルを一時的に切り替える場合
+        original_model = self.ollama_client.model
+        if model is not None:
+            self.ollama_client.model = model
 
         try:
             # Ollamaから応答を取得（デフォルトでJSON形式）
@@ -151,6 +158,10 @@ class AISecretary:
         except Exception as e:
             self.logger.error(f"Chat error: {e}")
             return {"error": str(e)} if return_json else f"エラーが発生しました: {str(e)}"
+        finally:
+            # モデルを元に戻す
+            if model is not None:
+                self.ollama_client.model = original_model
 
     def reset_conversation(self):
         """会話履歴をリセット"""
@@ -168,8 +179,8 @@ class AISecretary:
     def start(self):
         """秘書システムを起動"""
         self.logger.info("AI秘書システムを起動します")
-        self.logger.info(f"使用モデル: {self.config.model_name}")
-        self.logger.info(f"Ollamaホスト: {self.config.ollama_host}")
+        self.logger.info(f"使用モデル: {self.config.ollama.model}")
+        self.logger.info(f"Ollamaホスト: {self.config.ollama.host}")
 
     def stop(self):
         """秘書システムを停止"""

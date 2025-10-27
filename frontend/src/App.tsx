@@ -1,6 +1,6 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 
-import { ChatResponsePayload, postChatMessage } from './api';
+import { ChatResponsePayload, getAvailableModels, postChatMessage } from './api';
 
 type Role = 'user' | 'assistant';
 
@@ -26,11 +26,29 @@ export default function App(): JSX.Element {
   const [playAudio, setPlayAudio] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => a.timestamp - b.timestamp),
     [messages],
   );
+
+  // モデル一覧を取得
+  useEffect(() => {
+    async function fetchModels() {
+      try {
+        const models = await getAvailableModels();
+        setAvailableModels(models);
+        if (models.length > 0 && !selectedModel) {
+          setSelectedModel(models[0]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch models:', err);
+      }
+    }
+    fetchModels();
+  }, []);
 
   async function handleSubmit(evt: FormEvent<HTMLFormElement>): Promise<void> {
     evt.preventDefault();
@@ -51,7 +69,11 @@ export default function App(): JSX.Element {
     setSubmitting(true);
 
     try {
-      const response = await postChatMessage(userEntry.content, playAudio);
+      const response = await postChatMessage(
+        userEntry.content,
+        playAudio,
+        selectedModel || undefined,
+      );
       const assistantEntry: MessageEntry = {
         id: createId(),
         role: 'assistant',
@@ -93,6 +115,20 @@ export default function App(): JSX.Element {
               onChange={event => setPlayAudio(event.target.checked)}
             />
             サーバーで音声再生
+          </label>
+          <label className="app__model-select">
+            <span>モデル:</span>
+            <select
+              value={selectedModel}
+              onChange={event => setSelectedModel(event.target.value)}
+              disabled={submitting}
+            >
+              {availableModels.map(model => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       </header>
@@ -137,9 +173,15 @@ export default function App(): JSX.Element {
         <form className="chat-input" onSubmit={handleSubmit}>
           <textarea
             className="chat-input__textarea"
-            placeholder="メッセージを入力..."
+            placeholder="メッセージを入力... (Ctrl+Enterで送信)"
             value={input}
             onChange={event => setInput(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && event.ctrlKey) {
+                event.preventDefault();
+                handleSubmit(event as unknown as FormEvent<HTMLFormElement>);
+              }
+            }}
             disabled={submitting}
             rows={3}
           />

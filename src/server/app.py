@@ -20,6 +20,10 @@ class ChatRequest(BaseModel):
         default=True,
         description="If true, synthesized audio will be played immediately on the server",
     )
+    model: Optional[str] = Field(
+        default=None,
+        description="Ollama model name to use for this request (if not specified, uses default)",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -46,6 +50,12 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class ModelsResponse(BaseModel):
+    """Response for models list endpoint."""
+
+    models: list[str]
+
+
 @lru_cache(maxsize=1)
 def get_secretary() -> AISecretary:
     """Lazily create a singleton AISecretary instance."""
@@ -70,6 +80,17 @@ def create_app() -> FastAPI:
         """Simple health check endpoint."""
         return HealthResponse(status="ok")
 
+    @app.get("/api/models", response_model=ModelsResponse)
+    async def get_models() -> ModelsResponse:
+        """Get available Ollama models."""
+        secretary = get_secretary()
+        try:
+            models = await asyncio.to_thread(secretary.get_available_models)
+            return ModelsResponse(models=models)
+        except Exception as exc:  # pragma: no cover - runtime diagnostics
+            logger.exception("Failed to get models: %s", exc)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
         """Handle chat requests by delegating to the AISecretary."""
@@ -80,6 +101,7 @@ def create_app() -> FastAPI:
                 request.message,
                 True,
                 request.play_audio,
+                request.model,
             )
             return ChatResponse(**result)
         except Exception as exc:  # pragma: no cover - runtime diagnostics

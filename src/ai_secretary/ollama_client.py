@@ -161,8 +161,14 @@ class OllamaClient:
             モデル名のリスト
         """
         try:
-            models = self.client.list()
-            return [model["name"] for model in models["models"]]
+            response = self.client.list()
+            # ollama.Client().list() は ListResponse オブジェクトを返す
+            # models 属性にアクセスし、各モデルオブジェクトの model 属性を取得
+            if hasattr(response, 'models'):
+                return [model.model for model in response.models]
+            else:
+                self.logger.error(f"Unexpected response format: {type(response)}")
+                return []
         except Exception as e:
             self.logger.error(f"Failed to list models: {e}")
             return []

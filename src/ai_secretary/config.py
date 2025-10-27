@@ -13,12 +13,19 @@ from typing import Optional
 
 
 @dataclass
+class OllamaConfig:
+    """Ollama API設定"""
+
+    host: str = "http://localhost:11434"
+    model: str = "qwen3:8b"
+
+
+@dataclass
 class Config:
     """アプリケーション設定クラス"""
 
     # Ollama設定
-    ollama_host: str = "http://localhost:11434"
-    model_name: str = "qwen3:8b"
+    ollama: OllamaConfig = None  # type: ignore
 
     # ログ設定
     log_level: str = "INFO"
@@ -33,12 +40,19 @@ class Config:
     temperature: float = 0.7
     system_prompt: Optional[str] = None
 
+    def __post_init__(self):
+        """デフォルト値の初期化"""
+        if self.ollama is None:
+            self.ollama = OllamaConfig()
+
     @classmethod
     def from_env(cls) -> "Config":
         """環境変数から設定を読み込む"""
         return cls(
-            ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-            model_name=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
+            ollama=OllamaConfig(
+                host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+                model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
+            ),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "logs/ai_secretary.log"),
             max_tokens=int(os.getenv("MAX_TOKENS", "4096")),
