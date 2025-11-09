@@ -112,6 +112,18 @@ curl http://localhost:11434/api/tags
 - API client in [frontend/src/api.ts](frontend/src/api.ts)
 - Vite for bundling and dev server
 
+**ProactiveChatScheduler** ([src/ai_secretary/scheduler.py](src/ai_secretary/scheduler.py))
+- Background task scheduler for proactive chat feature
+- Runs periodic AI-initiated conversations (default: 5 minutes interval)
+- Thread-safe message queue management
+- Enable/disable via GUI toggle switch
+
+**ProactivePromptManager** ([src/ai_secretary/prompt_templates.py](src/ai_secretary/prompt_templates.py))
+- Template-based prompt generation for proactive messages
+- Loads templates from `config/proactive_prompts/*.txt`
+- Variable substitution: `{current_time}`, `{day_of_week}`, etc.
+- Extensible: add new `.txt` files to expand variety
+
 ### Data Flow
 
 ```
@@ -172,11 +184,14 @@ uv run python test_play.py
 ## Project Structure Notes
 
 - **doc/**: Architecture docs, changelogs, research notes
+  - **doc/design/proactive_chat.md**: Proactive chat feature design document
 - **plan/**: Task planning and management files
 - **logs/**: Auto-generated log files (gitignored)
 - **outputs/audio/**: Generated WAV files (gitignored)
 - **scripts/**: Development utilities (dev server launcher, etc.)
 - **samples/**: Sample code and test data generators
+- **config/proactive_prompts/**: Proactive chat prompt templates
+  - Add `.txt` files with one template per line to expand variety
 
 ## Development Workflow
 
@@ -199,3 +214,37 @@ uv run python test_play.py
 - **Python 3.13+** (specified in pyproject.toml)
 - **uv** as the package manager (not pip/poetry)
 - Use `uv add <package>` to add dependencies (auto-updates pyproject.toml and uv.lock)
+
+## Proactive Chat Feature
+
+The system supports AI-initiated conversations at regular intervals (default: 5 minutes).
+
+### How to Use
+
+1. Start the application normally with `uv run python scripts/dev_server.py`
+2. In the web UI, toggle the checkbox: **"AI側から定期的に話しかける"**
+3. The AI will proactively send messages based on templates in `config/proactive_prompts/`
+4. Messages appear automatically in the chat interface (polled every 10 seconds)
+
+### Customizing Prompts
+
+Edit or add files in `config/proactive_prompts/`:
+
+```txt
+現在時刻は {current_time} です。休憩を勧めてください。
+現在時刻は {current_time} です。水分補給を促してください。
+```
+
+Available variables:
+- `{current_time}`: Current date and time (YYYY-MM-DD HH:MM:SS)
+- `{day_of_week}`: Day of the week (Monday, Tuesday, etc.)
+- `{date}`: Current date (YYYY-MM-DD)
+- `{time}`: Current time (HH:MM:SS)
+
+### API Endpoints
+
+- `POST /api/proactive-chat/toggle` - Enable/disable proactive chat
+- `GET /api/proactive-chat/status` - Get current status
+- `GET /api/proactive-chat/pending` - Retrieve pending AI messages
+
+See [doc/design/proactive_chat.md](doc/design/proactive_chat.md) for detailed architecture.

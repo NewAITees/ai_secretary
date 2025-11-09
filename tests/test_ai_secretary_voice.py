@@ -16,6 +16,7 @@ class FakeOllamaClient:
     def __init__(self, response: Dict[str, Any]):
         self.response = response
         self.messages: List[Dict[str, str]] = []
+        self.model = "fake-model"  # secretaryがアクセスするmodel属性を追加
 
     def chat(self, messages, stream=False, return_json=True):  # noqa: D401
         self.messages.extend(messages)

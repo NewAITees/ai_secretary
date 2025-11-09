@@ -61,3 +61,72 @@ export async function getAvailableModels(): Promise<string[]> {
   const payload = (await response.json()) as { models: string[] };
   return payload.models;
 }
+
+export interface ProactiveChatStatus {
+  enabled: boolean;
+  running: boolean;
+  interval_seconds: number;
+  pending_count: number;
+}
+
+export interface ProactiveChatMessage {
+  text: string;
+  timestamp: number;
+  details?: ChatResponsePayload | null;
+  prompt?: string | null;
+  error?: boolean;
+}
+
+export async function toggleProactiveChat(enabled: boolean): Promise<void> {
+  const response = await fetch('/api/proactive-chat/toggle', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ enabled }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to toggle proactive chat: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+}
+
+export async function getProactiveChatStatus(): Promise<ProactiveChatStatus> {
+  const response = await fetch('/api/proactive-chat/status', {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to get proactive chat status: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ProactiveChatStatus;
+}
+
+export async function getPendingProactiveMessages(): Promise<ProactiveChatMessage[]> {
+  const response = await fetch('/api/proactive-chat/pending', {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to get pending messages: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  const payload = (await response.json()) as { messages: ProactiveChatMessage[] };
+  return payload.messages;
+}

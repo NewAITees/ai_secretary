@@ -1,6 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
-import { ChatResponsePayload, getAvailableModels, postChatMessage } from './api';
+import {
+  ChatResponsePayload,
+  getAvailableModels,
+  getPendingProactiveMessages,
+  getProactiveChatStatus,
+  postChatMessage,
+  toggleProactiveChat,
+} from './api';
 
 type Role = 'user' | 'assistant';
 
@@ -28,6 +35,7 @@ export default function App(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [proactiveChatEnabled, setProactiveChatEnabled] = useState(false);
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => a.timestamp - b.timestamp),
@@ -49,6 +57,64 @@ export default function App(): JSX.Element {
     }
     fetchModels();
   }, []);
+
+  // 能動会話の状態を初期化（ローカルストレージから復元）
+  useEffect(() => {
+    async function initProactiveChat() {
+      try {
+        const savedEnabled = localStorage.getItem('proactiveChatEnabled');
+        const initialEnabled = savedEnabled === 'true';
+        setProactiveChatEnabled(initialEnabled);
+
+        // サーバー側の状態を確認
+        const status = await getProactiveChatStatus();
+        if (status.enabled !== initialEnabled) {
+          // ローカルとサーバーの状態が一致しない場合は同期
+          await toggleProactiveChat(initialEnabled);
+        }
+      } catch (err) {
+        console.error('Failed to initialize proactive chat:', err);
+      }
+    }
+    initProactiveChat();
+  }, []);
+
+  // 能動会話が有効な場合、定期的に保留メッセージをポーリング
+  useEffect(() => {
+    if (!proactiveChatEnabled) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const pendingMessages = await getPendingProactiveMessages();
+        if (pendingMessages.length > 0) {
+          const newMessages: MessageEntry[] = pendingMessages.map(msg => ({
+            id: createId(),
+            role: 'assistant' as Role,
+            content: msg.text,
+            details: msg.details || undefined,
+            timestamp: msg.timestamp * 1000, // 秒からミリ秒に変換
+          }));
+          setMessages(prev => [...prev, ...newMessages]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch pending messages:', err);
+      }
+    }, 10000); // 10秒ごと
+
+    return () => clearInterval(interval);
+  }, [proactiveChatEnabled]);
+
+  async function handleToggleProactiveChat(enabled: boolean): Promise<void> {
+    try {
+      await toggleProactiveChat(enabled);
+      setProactiveChatEnabled(enabled);
+      localStorage.setItem('proactiveChatEnabled', enabled.toString());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '能動会話の切り替えに失敗しました';
+      setError(message);
+      console.error('Failed to toggle proactive chat:', err);
+    }
+  }
 
   async function handleSubmit(evt: FormEvent<HTMLFormElement>): Promise<void> {
     evt.preventDefault();
@@ -115,6 +181,14 @@ export default function App(): JSX.Element {
               onChange={event => setPlayAudio(event.target.checked)}
             />
             サーバーで音声再生
+          </label>
+          <label className="app__checkbox">
+            <input
+              type="checkbox"
+              checked={proactiveChatEnabled}
+              onChange={event => handleToggleProactiveChat(event.target.checked)}
+            />
+            AI側から定期的に話しかける
           </label>
           <label className="app__model-select">
             <span>モデル:</span>
