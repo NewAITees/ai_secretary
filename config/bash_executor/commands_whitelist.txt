@@ -1,0 +1,67 @@
+# Bash Executorで許可するコマンドのホワイトリスト
+# 各行に1つのコマンド名を記述
+# '#'で始まる行はコメントとして扱われます
+
+# 基本コマンド
+ls
+cd
+pwd
+echo
+cat
+grep
+find
+mkdir
+touch
+rm
+cp
+mv
+
+# ファイル操作
+head
+tail
+wc
+sort
+uniq
+diff
+
+# テキスト処理
+sed
+awk
+cut
+tr
+
+# システム情報
+whoami
+date
+uname
+hostname
+
+# Git
+git
+
+# Python
+python
+python3
+pip
+uv
+
+# その他開発ツール
+curl
+wget
+make
+npm
+node
+
+# パッケージ管理
+apt
+apt-get
+
+# プロセス管理
+ps
+kill
+killall
+
+# ディスク・ファイルシステム
+du
+df
+tree

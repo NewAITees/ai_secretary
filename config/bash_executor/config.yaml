@@ -1,0 +1,20 @@
+# Bash Executor設定ファイル
+
+# 実行環境
+executor:
+  root_dir: /home/perso/analysis/ai_secretary
+  shell: /bin/bash
+  timeout: 30  # コマンドタイムアウト（秒）
+
+# セキュリティ
+security:
+  enable_whitelist: true
+  whitelist_file: config/bash_executor/commands_whitelist.txt
+  block_patterns:
+    - "`"
+    - "$("
+
+# ログ設定
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
