@@ -1,0 +1,27 @@
+# AI Secretary Application Configuration
+
+# Ollama設定
+ollama:
+  host: http://localhost:11434
+  model: qwen3:8b
+
+# 能動的会話設定
+proactive_chat:
+  interval_seconds: 300  # 実行間隔（秒）デフォルト5分
+  max_queue_size: 10     # メッセージキューの最大サイズ
+
+# ログ設定
+log:
+  level: INFO
+  file: logs/ai_secretary.log
+
+# COEIROINK設定
+coeiroink:
+  api_url: http://localhost:50032
+  audio_output_dir: outputs/audio
+
+# AI生成設定
+ai:
+  max_tokens: 4096
+  temperature: 0.7
+  system_prompt: あなたは親切で有能なAI秘書です。

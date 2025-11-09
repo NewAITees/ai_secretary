@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from src.ai_secretary.config import Config
 from src.ai_secretary.scheduler import ProactiveChatScheduler
 from src.ai_secretary.prompt_templates import ProactivePromptManager
 from src.ai_secretary.secretary import AISecretary
@@ -106,10 +107,16 @@ def get_secretary() -> AISecretary:
 @lru_cache(maxsize=1)
 def get_scheduler() -> ProactiveChatScheduler:
     """Lazily create a singleton ProactiveChatScheduler instance."""
+    config = Config.from_yaml()
     secretary = get_secretary()
     templates_dir = Path(__file__).parent.parent.parent / "config" / "proactive_prompts"
     prompt_manager = ProactivePromptManager(templates_dir)
-    scheduler = ProactiveChatScheduler(secretary, prompt_manager)
+    scheduler = ProactiveChatScheduler(
+        secretary,
+        prompt_manager,
+        interval_seconds=config.proactive_chat.interval_seconds,
+        max_queue_size=config.proactive_chat.max_queue_size,
+    )
     scheduler.start()  # スケジューラーを起動
     return scheduler
 
