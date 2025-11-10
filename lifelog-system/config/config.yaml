@@ -1,0 +1,57 @@
+# lifelog-system configuration
+
+# 収集設定
+collection:
+  # サンプリング間隔（秒）
+  sampling_interval: 12
+
+  # アイドル判定閾値（秒）
+  idle_threshold: 60
+
+  # バルク書き込み設定
+  bulk_write:
+    max_queue_size: 1000
+    batch_size: 10
+    timeout_seconds: 3
+
+# データベース設定
+database:
+  path: "lifelog.db"
+
+  # データ保持期間（日）
+  retention:
+    intervals: 30
+    health: 7
+
+  # クリーンアップ実行時刻
+  cleanup_time: "03:00"
+
+# SLO目標値
+slo:
+  collection_delay_p95: 3.0    # 秒
+  db_write_time_p95: 50        # ミリ秒
+  max_drop_rate: 0.005         # 0.5%
+  max_memory_mb: 100
+
+# ヘルスモニタリング
+health:
+  # メトリクス記録間隔（秒）
+  snapshot_interval: 60
+
+  # アラート閾値
+  alert:
+    consecutive_violations: 3
+    notification_method: "log"  # log | email | webhook
+
+# MCP設定
+mcp:
+  server_name: "lifelog-activity"
+  max_results_per_query: 1000
+
+# ログ設定
+logging:
+  level: "INFO"
+  format: "json"  # json | text
+  file: "logs/lifelog.log"
+  max_size_mb: 10
+  backup_count: 5

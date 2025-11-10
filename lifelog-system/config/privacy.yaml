@@ -1,0 +1,35 @@
+# lifelog-system privacy configuration
+
+privacy:
+  # ⚠️ 以下はデフォルトで false（安全側）
+
+  # ウィンドウタイトル原文を保存するか
+  store_raw_titles: false
+
+  # ブラウザのフルURLを保存するか
+  store_full_urls: false
+
+  # 除外プロセス（記録しない）
+  exclude_processes:
+    - keepass.exe
+    - keepassxc.exe
+    - lastpass.exe
+    - 1password.exe
+    - bitwarden.exe
+    - nordvpn.exe
+    - expressvpn.exe
+    - tor.exe
+
+  # 除外ウィンドウクラス
+  exclude_window_classes:
+    - "PasswordWindow"
+    - "SecureInputWindow"
+    - "CredentialDialog"
+
+  # センシティブキーワード（これらを含むプロセスは記録しない）
+  sensitive_keywords:
+    - password
+    - パスワード
+    - credential
+    - secret
+    - private
