@@ -167,7 +167,7 @@ class ProactiveChatScheduler:
             # AI会話実行（secretaryのchatメソッドを呼び出し）
             result = self.secretary.chat(
                 user_message=prompt,
-                synthesize_voice=True,
+                return_json=True,
                 play_audio=True,
             )
 
