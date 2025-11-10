@@ -86,6 +86,15 @@ class Config:
         coeiroink_data = yaml_data.get("coeiroink", {})
         ai_data = yaml_data.get("ai", {})
 
+        # システムプロンプトをファイルから読み込む
+        system_prompt = None
+        system_prompt_file = ai_data.get("system_prompt_file")
+        if system_prompt_file:
+            prompt_path = config_path.parent.parent / system_prompt_file
+            if prompt_path.exists():
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    system_prompt = f.read().strip()
+
         return cls(
             ollama=OllamaConfig(
                 host=ollama_data.get("host", "http://localhost:11434"),
@@ -99,7 +108,7 @@ class Config:
             log_file=log_data.get("file", "logs/ai_secretary.log"),
             max_tokens=ai_data.get("max_tokens", 4096),
             temperature=ai_data.get("temperature", 0.7),
-            system_prompt=ai_data.get("system_prompt"),
+            system_prompt=system_prompt,
             coeiroink_api_url=coeiroink_data.get("api_url", "http://localhost:50032"),
             audio_output_dir=coeiroink_data.get("audio_output_dir", "outputs/audio"),
         )
