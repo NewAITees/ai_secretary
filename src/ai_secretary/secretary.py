@@ -38,12 +38,12 @@ class AISecretary:
         初期化
 
         Args:
-            config: 設定オブジェクト。Noneの場合は環境変数から読み込む
+            config: 設定オブジェクト。Noneの場合はYAMLファイルから読み込む
             ollama_client: 依存性注入用のOllamaクライアント
             coeiroink_client: 依存性注入用のCOEIROINKクライアント
             audio_player: 依存性注入用のAudioPlayer
         """
-        self.config = config or Config.from_env()
+        self.config = config or Config.from_yaml()
         self.logger = logging.getLogger(__name__)
 
         # Ollamaクライアントの初期化

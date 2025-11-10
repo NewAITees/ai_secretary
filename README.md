@@ -40,10 +40,10 @@ npm install --prefix frontend
 ```
    - 追加のPythonライブラリが必要な場合は `uv add <package_name>` を利用してください。
 
-3. 環境変数の設定
+3. 設定ファイルの編集（オプション）
 ```bash
-cp .env.example .env
-# .envファイルを編集して必要な設定を行う
+# config/app_config.yaml を編集して設定をカスタマイズ
+# デフォルト設定でも動作します
 ```
 
 ### 開発環境のセットアップ
