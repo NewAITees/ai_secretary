@@ -1,5 +1,6 @@
 """AISecretaryのBASH実行機能統合テスト"""
 
+import json
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.ai_secretary.secretary import AISecretary
@@ -246,15 +247,17 @@ class TestBashIntegration:
         # BashExecutorが呼ばれたか確認
         mock_bash_executor.execute.assert_called_once_with("pwd")
 
-        # 会話履歴にBASH実行結果（Step 2プロンプト）が追加されたか確認
-        bash_result_messages = [
-            msg
-            for msg in secretary_with_bash.conversation_history
-            if msg.get("role") == "system" and "BASH実行結果" in msg.get("content", "")
+        # Step 2のシステムメッセージはクリーンアップされるため会話履歴には残らない
+        # ただし、BashExecutorが呼ばれたことは既に確認済み
+        # 最終的なアシスタント応答がStep 2のレスポンスであることを確認
+        assistant_messages = [
+            msg for msg in secretary_with_bash.conversation_history
+            if msg.get("role") == "assistant"
         ]
-        assert len(bash_result_messages) >= 1, f"Found {len(bash_result_messages)} Step 2 prompts"
-        assert "pwd" in bash_result_messages[0]["content"]
-        assert "/home/test" in bash_result_messages[0]["content"]
+        assert len(assistant_messages) >= 1, "No assistant messages found"
+        # Step 2のレスポンスが最後のアシスタントメッセージになっている
+        last_response = json.loads(assistant_messages[-1]["content"])
+        assert "text" in last_response
 
     def test_bash_actions_invalid_format(self, secretary_with_bash):
         """不正な形式のbashActionsを無視するか"""

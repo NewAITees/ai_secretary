@@ -1,6 +1,6 @@
-import asyncio
 import logging
 import threading
+import time
 import uuid
 from datetime import date
 from functools import lru_cache
@@ -15,7 +15,12 @@ from src.ai_secretary.config import Config
 from src.ai_secretary.scheduler import ProactiveChatScheduler
 from src.ai_secretary.prompt_templates import ProactivePromptManager
 from src.ai_secretary.secretary import AISecretary
+from src.ai_secretary.logger import setup_logger
 from src.todo import TodoItem, TodoRepository, TodoStatus, UNSET
+
+# ロガー設定を初期化
+config = Config.from_yaml()
+setup_logger(log_level=config.log_level, log_file=config.log_file)
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +173,7 @@ class BashApprovalQueue:
             self._requests[request_id] = {
                 "command": command,
                 "reason": reason,
-                "timestamp": asyncio.get_event_loop().time(),
+                "timestamp": time.time(),
             }
             self._events[request_id] = threading.Event()
         logger.info(f"Approval request added: {request_id}")

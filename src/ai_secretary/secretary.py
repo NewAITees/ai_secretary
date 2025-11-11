@@ -183,6 +183,10 @@ class AISecretary:
                 enable_verification=enable_bash_verification
             )
 
+            # Step2で追加されたTODO actionsも処理
+            if final_response != raw_response:
+                self._handle_todo_actions(final_response)
+
             # アシスタントの応答を履歴に追加（JSON文字列として）
             response_str = json.dumps(final_response, ensure_ascii=False)
             self.conversation_history.append(
@@ -336,54 +340,9 @@ class AISecretary:
         )
 
     # =========================================================
-    # BASH 3段階ワークフロー - 各ステップ専用スキーマ&プロンプト
+    # BASH 3段階ワークフロー - Step2/Step3専用スキーマ&プロンプト
     # =========================================================
-
-    def _get_step1_json_schema(self) -> str:
-        """
-        Step 1用JSONスキーマ定義（BASH判断 + 音声応答）
-
-        COEIROINKクライアントが無効な場合は音声フィールドを省略
-
-        Returns:
-            JSONスキーマ定義文字列
-        """
-        if self.coeiro_client is None:
-            # COEIROINKが無効な場合は音声フィールドを省略
-            return '''
-{
-  "text": "ユーザーへの応答文（日本語）",
-  "bashActions": [
-    {
-      "command": "実行するコマンド（例: ls -la）",
-      "reason": "実行理由"
-    }
-  ]
-}
-'''
-
-        # COEIROINKが有効な場合は音声フィールドも含める
-        return '''
-{
-  "text": "ユーザーへの応答文（日本語）",
-  "bashActions": [
-    {
-      "command": "実行するコマンド（例: ls -la）",
-      "reason": "実行理由"
-    }
-  ],
-  "speakerUuid": "COEIROINKスピーカーUUID",
-  "styleId": 0,
-  "speedScale": 1.0,
-  "volumeScale": 1.0,
-  "pitchScale": 0.0,
-  "intonationScale": 1.0,
-  "prePhonemeLength": 0.1,
-  "postPhonemeLength": 0.1,
-  "outputSamplingRate": 24000,
-  "prosodyDetail": []
-}
-'''
+    # 注: Step1はconfig/system_prompt.txtで定義されたシステムプロンプトを使用
 
     def _get_step2_json_schema(self) -> str:
         """
@@ -433,41 +392,6 @@ class AISecretary:
   "suggestion": "失敗時の改善提案（成功時は空文字）"
 }
 '''
-
-    def _build_step1_prompt(self, user_message: str) -> str:
-        """
-        Step 1専用プロンプト: BASHコマンド必要性の判断
-
-        Args:
-            user_message: ユーザーのメッセージ
-
-        Returns:
-            Step 1用のシステムプロンプト
-        """
-        schema = self._get_step1_json_schema()
-        return (
-            "## Step 1: タスク分析とBASHコマンド判断\n\n"
-            f"ユーザーの質問: {user_message}\n\n"
-            "以下の判断基準に従い、BASHコマンドが必要かどうかを判断してください:\n\n"
-            "### BASHコマンドが必要な場合\n"
-            "- ファイルシステムの情報取得（ファイル一覧、ディレクトリ構造など）\n"
-            "- ファイル内容の読み取り\n"
-            "- Git操作（status, log, diffなど）\n"
-            "- 環境情報の取得（uvバージョン、Pythonバージョンなど）\n"
-            "- プロジェクト固有のコマンド実行\n\n"
-            "### BASHコマンドが不要な場合\n"
-            "- 一般的な知識や説明のみで回答可能な質問\n"
-            "- 既に会話履歴に必要な情報がある場合\n"
-            "- ユーザーとの対話や確認のみの場合\n\n"
-            "### 応答形式\n"
-            "以下のJSONスキーマに厳密に従って応答してください:\n"
-            f"```json\n{schema}```\n\n"
-            "**重要事項**:\n"
-            "- BASHコマンドが不要な場合は `bashActions` を空配列 `[]` にしてください\n"
-            "- BASHコマンドが必要な場合は、実行理由（reason）を必ず明記してください\n"
-            "- 必ずすべてのCOEIROINKフィールドを含めてください\n"
-            "- JSON以外のテキストは一切出力しないでください\n"
-        )
 
     def _build_step2_prompt(self, user_message: str, bash_results: list) -> str:
         """
@@ -668,9 +592,8 @@ class AISecretary:
             return_json=True
         )
 
-        # アシスタントの応答を履歴に追加
-        response_str = json.dumps(response, ensure_ascii=False)
-        self.conversation_history.append({"role": "assistant", "content": response_str})
+        # Step 2のシステムメッセージとアシスタント応答を削除（履歴汚染防止）
+        self.conversation_history.pop()  # システムメッセージを削除
 
         self.logger.info("BASH Step 2: Response generated based on execution results")
         return response
