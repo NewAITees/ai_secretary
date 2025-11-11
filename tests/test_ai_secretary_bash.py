@@ -42,7 +42,7 @@ class TestBashIntegration:
     def secretary_with_bash(self, mock_config, mock_bash_executor):
         """BashExecutor統合済みのAISecretaryを作成"""
         with patch("src.ai_secretary.secretary.OllamaClient"), patch(
-            "src.ai_secretary.secretary.COEIROINKClient"
+            "src.ai_secretary.secretary.COEIROINKClient", side_effect=Exception("COEIROINK disabled for test")
         ), patch("src.ai_secretary.secretary.AudioPlayer"):
             secretary = AISecretary(
                 config=mock_config,
@@ -228,14 +228,17 @@ class TestBashIntegration:
             "cwd": "/home/test",
         }
 
-        # ステップ2と3のモックレスポンスを追加
-        step2_response = {**mock_ollama.chat.return_value, "text": "現在のディレクトリは/home/testです"}
+        # ステップ2のモックレスポンス（COEIROINKフィールドなし - coeiroink_client=Noneのため）
+        step2_response = {"text": "現在のディレクトリは/home/testです"}
         verification_response = {"success": True, "reason": "OK", "suggestion": ""}
         mock_ollama.chat.side_effect = [
-            mock_ollama.chat.return_value,  # 最初のchat()
+            mock_ollama.chat.return_value,  # 最初のchat() - Step 1
             step2_response,                  # ステップ2
-            verification_response            # ステップ3
+            verification_response            # ステップ3（検証無効なので呼ばれない）
         ]
+
+        # COEIROINKクライアントがNoneであることを確認（デバッグ）
+        assert secretary_with_bash.coeiro_client is None, "coeiroink_client should be None"
 
         # chatを実行（検証無効でシンプル化）
         secretary_with_bash.chat("現在のディレクトリを教えて", play_audio=False, enable_bash_verification=False)
@@ -243,13 +246,13 @@ class TestBashIntegration:
         # BashExecutorが呼ばれたか確認
         mock_bash_executor.execute.assert_called_once_with("pwd")
 
-        # 会話履歴にBASH実行結果が追加されたか確認
+        # 会話履歴にBASH実行結果（Step 2プロンプト）が追加されたか確認
         bash_result_messages = [
             msg
             for msg in secretary_with_bash.conversation_history
-            if msg.get("role") == "system" and "BASHコマンド実行結果" in msg.get("content", "")
+            if msg.get("role") == "system" and "BASH実行結果" in msg.get("content", "")
         ]
-        assert len(bash_result_messages) >= 1
+        assert len(bash_result_messages) >= 1, f"Found {len(bash_result_messages)} Step 2 prompts"
         assert "pwd" in bash_result_messages[0]["content"]
         assert "/home/test" in bash_result_messages[0]["content"]
 

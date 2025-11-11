@@ -189,12 +189,15 @@ class AISecretary:
                 {"role": "assistant", "content": response_str}
             )
 
-            voice_plan = self._extract_voice_plan(final_response)
+            voice_plan = None
             audio_path = None
-            if voice_plan is not None:
-                audio_path = self._synthesize_and_optionally_play(
-                    voice_plan, play_audio=play_audio
-                )
+            # COEIROINKクライアントが有効な場合のみ音声合成を試みる
+            if self.coeiro_client is not None:
+                voice_plan = self._extract_voice_plan(final_response)
+                if voice_plan is not None:
+                    audio_path = self._synthesize_and_optionally_play(
+                        voice_plan, play_audio=play_audio
+                    )
 
             result: Dict[str, Any] = {
                 "voice_plan": voice_plan,
@@ -332,6 +335,225 @@ class AISecretary:
             "- 危険なコマンド（rm -rf、chmod 777など）は実行できません\n"
         )
 
+    # =========================================================
+    # BASH 3段階ワークフロー - 各ステップ専用スキーマ&プロンプト
+    # =========================================================
+
+    def _get_step1_json_schema(self) -> str:
+        """
+        Step 1用JSONスキーマ定義（BASH判断 + 音声応答）
+
+        COEIROINKクライアントが無効な場合は音声フィールドを省略
+
+        Returns:
+            JSONスキーマ定義文字列
+        """
+        if self.coeiro_client is None:
+            # COEIROINKが無効な場合は音声フィールドを省略
+            return '''
+{
+  "text": "ユーザーへの応答文（日本語）",
+  "bashActions": [
+    {
+      "command": "実行するコマンド（例: ls -la）",
+      "reason": "実行理由"
+    }
+  ]
+}
+'''
+
+        # COEIROINKが有効な場合は音声フィールドも含める
+        return '''
+{
+  "text": "ユーザーへの応答文（日本語）",
+  "bashActions": [
+    {
+      "command": "実行するコマンド（例: ls -la）",
+      "reason": "実行理由"
+    }
+  ],
+  "speakerUuid": "COEIROINKスピーカーUUID",
+  "styleId": 0,
+  "speedScale": 1.0,
+  "volumeScale": 1.0,
+  "pitchScale": 0.0,
+  "intonationScale": 1.0,
+  "prePhonemeLength": 0.1,
+  "postPhonemeLength": 0.1,
+  "outputSamplingRate": 24000,
+  "prosodyDetail": []
+}
+'''
+
+    def _get_step2_json_schema(self) -> str:
+        """
+        Step 2用JSONスキーマ定義（実行結果を踏まえた音声応答）
+
+        COEIROINKクライアントが無効な場合はtextのみでも可
+
+        Returns:
+            JSONスキーマ定義文字列
+        """
+        if self.coeiro_client is None:
+            # COEIROINKが無効な場合はtextのみ
+            return '''
+{
+  "text": "BASH実行結果を踏まえたユーザーへの応答文（日本語）"
+}
+'''
+
+        # COEIROINKが有効な場合は音声フィールドも含める
+        return '''
+{
+  "text": "BASH実行結果を踏まえたユーザーへの応答文（日本語）",
+  "speakerUuid": "COEIROINKスピーカーUUID",
+  "styleId": 0,
+  "speedScale": 1.0,
+  "volumeScale": 1.0,
+  "pitchScale": 0.0,
+  "intonationScale": 1.0,
+  "prePhonemeLength": 0.1,
+  "postPhonemeLength": 0.1,
+  "outputSamplingRate": 24000,
+  "prosodyDetail": []
+}
+'''
+
+    def _get_step3_json_schema(self) -> str:
+        """
+        Step 3用JSONスキーマ定義（検証結果のみ）
+
+        Returns:
+            JSONスキーマ定義文字列
+        """
+        return '''
+{
+  "success": true,
+  "reason": "検証結果の詳細説明",
+  "suggestion": "失敗時の改善提案（成功時は空文字）"
+}
+'''
+
+    def _build_step1_prompt(self, user_message: str) -> str:
+        """
+        Step 1専用プロンプト: BASHコマンド必要性の判断
+
+        Args:
+            user_message: ユーザーのメッセージ
+
+        Returns:
+            Step 1用のシステムプロンプト
+        """
+        schema = self._get_step1_json_schema()
+        return (
+            "## Step 1: タスク分析とBASHコマンド判断\n\n"
+            f"ユーザーの質問: {user_message}\n\n"
+            "以下の判断基準に従い、BASHコマンドが必要かどうかを判断してください:\n\n"
+            "### BASHコマンドが必要な場合\n"
+            "- ファイルシステムの情報取得（ファイル一覧、ディレクトリ構造など）\n"
+            "- ファイル内容の読み取り\n"
+            "- Git操作（status, log, diffなど）\n"
+            "- 環境情報の取得（uvバージョン、Pythonバージョンなど）\n"
+            "- プロジェクト固有のコマンド実行\n\n"
+            "### BASHコマンドが不要な場合\n"
+            "- 一般的な知識や説明のみで回答可能な質問\n"
+            "- 既に会話履歴に必要な情報がある場合\n"
+            "- ユーザーとの対話や確認のみの場合\n\n"
+            "### 応答形式\n"
+            "以下のJSONスキーマに厳密に従って応答してください:\n"
+            f"```json\n{schema}```\n\n"
+            "**重要事項**:\n"
+            "- BASHコマンドが不要な場合は `bashActions` を空配列 `[]` にしてください\n"
+            "- BASHコマンドが必要な場合は、実行理由（reason）を必ず明記してください\n"
+            "- 必ずすべてのCOEIROINKフィールドを含めてください\n"
+            "- JSON以外のテキストは一切出力しないでください\n"
+        )
+
+    def _build_step2_prompt(self, user_message: str, bash_results: list) -> str:
+        """
+        Step 2専用プロンプト: 実行結果を踏まえた回答生成
+
+        Args:
+            user_message: ユーザーのメッセージ
+            bash_results: BASH実行結果
+
+        Returns:
+            Step 2用のシステムプロンプト
+        """
+        result_context = self._format_bash_results(bash_results)
+        schema = self._get_step2_json_schema()
+
+        return (
+            "## Step 2: BASH実行結果を踏まえた回答生成\n\n"
+            f"**ユーザーの質問**: {user_message}\n\n"
+            f"**BASH実行結果**:\n```\n{result_context}\n```\n\n"
+            "### 指示\n"
+            "上記のBASH実行結果を**必ず確認**し、その内容を踏まえてユーザーの質問に適切に回答してください。\n\n"
+            "### 応答のポイント\n"
+            "- 実行結果の要点をわかりやすく説明する\n"
+            "- エラーが発生した場合は、エラー内容を説明し対処法を提案する\n"
+            "- 実行成功時は、結果の意味をユーザーにわかりやすく伝える\n"
+            "- 実行結果を無視せず、必ず言及する\n\n"
+            "### 応答形式\n"
+            "以下のJSONスキーマに厳密に従って応答してください:\n"
+            f"```json\n{schema}```\n\n"
+            "**重要事項**:\n"
+            "- `bashActions` フィールドは**含めないでください**（Step 2では不要）\n"
+            "- 必ずすべてのCOEIROINKフィールドを含めてください\n"
+            "- JSON以外のテキストは一切出力しないでください\n"
+        )
+
+    def _build_step3_prompt(
+        self, user_message: str, bash_results: list, response: dict
+    ) -> str:
+        """
+        Step 3専用プロンプト: 検証のみに集中
+
+        Args:
+            user_message: ユーザーのメッセージ
+            bash_results: BASH実行結果
+            response: Step 2で生成した回答
+
+        Returns:
+            Step 3用のシステムプロンプト
+        """
+        bash_summary = "\n".join([
+            f"- コマンド: `{r['command']}`, "
+            f"終了コード: {r['result']['exit_code'] if r['result'] else 'エラー'}, "
+            f"エラー: {r.get('error', 'なし')}"
+            for r in bash_results
+        ])
+
+        schema = self._get_step3_json_schema()
+
+        return (
+            "## Step 3: タスク達成度と回答の整合性を検証\n\n"
+            f"**ユーザーの質問**: {user_message}\n\n"
+            f"**実行したBASHコマンド**:\n{bash_summary}\n\n"
+            f"**生成した回答**: {response.get('text', '')}\n\n"
+            "### 検証項目\n"
+            "以下の3点を厳密に評価してください:\n\n"
+            "1. **BASHコマンドは正常に実行されましたか？**\n"
+            "   - すべてのコマンドのexit_codeが0か確認\n"
+            "   - エラーが発生していないか確認\n\n"
+            "2. **回答はBASHコマンドの実行結果を正しく反映していますか？**\n"
+            "   - 実行結果の内容が回答に含まれているか\n"
+            "   - 実行結果を無視していないか\n"
+            "   - 誤った情報を伝えていないか\n\n"
+            "3. **回答はユーザーの質問に適切に答えていますか？**\n"
+            "   - 質問の意図を正しく理解しているか\n"
+            "   - 必要な情報が全て含まれているか\n\n"
+            "### 応答形式\n"
+            "以下のJSONスキーマに厳密に従って応答してください:\n"
+            f"```json\n{schema}```\n\n"
+            "**重要事項**:\n"
+            "- `success` は**すべての検証項目が合格**した場合のみ `true`\n"
+            "- `reason` には検証結果の詳細な説明を記載\n"
+            "- `suggestion` は失敗時のみ具体的な改善提案を記載（成功時は空文字 \"\"）\n"
+            "- COEIROINKフィールドは**一切含めないでください**\n"
+            "- JSON以外のテキストは一切出力しないでください\n"
+        )
+
     def _process_bash_actions(self, actions: list) -> list:
         """
         bashActionsを処理し、実行結果を返す
@@ -423,35 +645,33 @@ class AISecretary:
     ) -> dict:
         """
         3段階フロー - ステップ2: BASH実行結果を踏まえた回答生成
-        
+
         Args:
             user_message: ユーザーの質問
             bash_results: _process_bash_actions()の結果
-        
+
         Returns:
-            LLM応答
+            LLM応答（COEIROINKフィールドのみ、bashActions除外）
         """
-        # 実行結果を踏まえた回答生成を促すプロンプトを追加
-        result_context = self._format_bash_results(bash_results)
+        # Step 2専用プロンプトを使用
+        step2_prompt = self._build_step2_prompt(user_message, bash_results)
+
         self.conversation_history.append({
             "role": "system",
-            "content": (
-                f"BASHコマンド実行結果:\n\n{result_context}\n\n"
-                "上記の実行結果を踏まえて、ユーザーの質問に適切に回答してください。"
-            )
+            "content": step2_prompt
         })
-        
-        # 再度LLMを呼び出して回答生成
+
+        # Step 2用のJSON応答を要求（bashActions不要）
         response = self.ollama_client.chat(
             messages=self.conversation_history,
             stream=False,
             return_json=True
         )
-        
+
         # アシスタントの応答を履歴に追加
         response_str = json.dumps(response, ensure_ascii=False)
         self.conversation_history.append({"role": "assistant", "content": response_str})
-        
+
         self.logger.info("BASH Step 2: Response generated based on execution results")
         return response
 
@@ -460,69 +680,37 @@ class AISecretary:
     ) -> dict:
         """
         3段階フロー - ステップ3: タスク達成度と回答の整合性を検証
-        
+
         Args:
             user_message: ユーザーの質問
             bash_results: BASH実行結果
             response: ステップ2で生成した回答
-        
+
         Returns:
             {"success": bool, "reason": str, "suggestion": str}
         """
-        verification_prompt = self._build_verification_prompt(
-            user_message, bash_results, response
-        )
-        
+        # Step 3専用プロンプトを使用
+        step3_prompt = self._build_step3_prompt(user_message, bash_results, response)
+
         self.conversation_history.append({
             "role": "system",
-            "content": verification_prompt
+            "content": step3_prompt
         })
-        
-        # 検証用LLM呼び出し
+
+        # Step 3用のJSON応答を要求（検証結果のみ）
         verification = self.ollama_client.chat(
             messages=self.conversation_history,
             stream=False,
             return_json=True
         )
-        
+
         # 検証結果を履歴から削除（次回に影響させない）
         self.conversation_history.pop()
-        
+
         self.logger.info(
             f"BASH Step 3: Verification result - success: {verification.get('success', False)}"
         )
         return verification
-
-    def _build_verification_prompt(
-        self, user_message: str, bash_results: list, response: dict
-    ) -> str:
-        """検証用プロンプトを生成"""
-        bash_summary = "\n".join([
-            f"- コマンド: `{r['command']}`, "
-            f"終了コード: {r['result']['exit_code'] if r['result'] else 'エラー'}, "
-            f"エラー: {r.get('error', 'なし')}"
-            for r in bash_results
-        ])
-        
-        return (
-            "## タスク検証\n\n"
-            "以下の内容を検証してください:\n\n"
-            f"**ユーザーの質問**: {user_message}\n\n"
-            f"**実行したBASHコマンド**:\n{bash_summary}\n\n"
-            f"**生成した回答**: {response.get('text', '')}\n\n"
-            "### 検証項目\n"
-            "1. BASHコマンドは正常に実行されましたか？（exit_code=0）\n"
-            "2. 回答はBASHコマンドの実行結果を正しく反映していますか？\n"
-            "3. 回答はユーザーの質問に適切に答えていますか？\n\n"
-            "以下のJSON形式で検証結果を返してください:\n"
-            "```json\n"
-            "{\n"
-            '  "success": true,  // 全ての検証項目が合格ならtrue\n'
-            '  "reason": "検証結果の詳細説明",\n'
-            '  "suggestion": "失敗時の改善提案（成功時は空文字）"\n'
-            "}\n"
-            "```"
-        )
 
     def _execute_bash_workflow(
         self,
