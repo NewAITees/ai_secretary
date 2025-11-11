@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -14,6 +15,7 @@ from typing import Iterable, List, Tuple
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT_DIR / "frontend"
+LIFELOG_DIR = ROOT_DIR / "lifelog-system"
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +33,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5173,
         help="Port for the Vite dev server (default: 5173)",
+    )
+    parser.add_argument(
+        "--disable-lifelog",
+        action="store_true",
+        help="Disable lifelog-system background process (default: enabled)",
     )
     return parser.parse_args()
 
@@ -100,6 +107,25 @@ async def terminate_process(
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    # Start lifelog daemon if enabled
+    lifelog_started = False
+    if not args.disable_lifelog and LIFELOG_DIR.exists():
+        daemon_script = LIFELOG_DIR / "scripts" / "daemon.sh"
+        if daemon_script.exists():
+            result = subprocess.run(
+                [str(daemon_script), "start"],
+                cwd=str(LIFELOG_DIR),
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                sys.stdout.write("[lifelog] Started in background\n")
+                sys.stdout.flush()
+                lifelog_started = True
+            else:
+                sys.stderr.write(f"[lifelog] Failed to start: {result.stderr}\n")
+                sys.stderr.flush()
+
     backend_cmd = [
         sys.executable,
         "-m",
@@ -140,6 +166,22 @@ async def main_async(args: argparse.Namespace) -> int:
 
     await terminate_process(backend_proc, "backend")
     await terminate_process(frontend_proc, "frontend")
+
+    # Stop lifelog daemon if it was started
+    if lifelog_started:
+        daemon_script = LIFELOG_DIR / "scripts" / "daemon.sh"
+        result = subprocess.run(
+            [str(daemon_script), "stop"],
+            cwd=str(LIFELOG_DIR),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            sys.stdout.write("[lifelog] Stopped\n")
+            sys.stdout.flush()
+        else:
+            sys.stderr.write(f"[lifelog] Failed to stop: {result.stderr}\n")
+            sys.stderr.flush()
 
     for task in backend_tasks:
         task.cancel()
