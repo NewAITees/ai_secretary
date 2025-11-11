@@ -15,6 +15,12 @@ AI Secretaryは、Ollamaを活用してローカル環境で動作するAI秘書
 - 環境変数による柔軟な設定管理
 - 複数モデルの切り替え対応
 
+## TODOリスト機能
+
+- SQLiteベースのTODOリポジトリ（`data/todo.db`）と `GET/POST/PATCH/DELETE /api/todos` エンドポイントを追加し、タイトル/詳細/期限/状態（pending, in_progress, done）を永続化します。
+- フロントエンドのTODOボードからAIと人間が同じリストを閲覧・追加・編集・完了・削除可能です。
+- `AISecretary` は応答JSONに含まれる `todoActions`（add/update/complete/delete）を解釈してDBへ反映し、会話時に最新TODOをシステムプロンプトへ組み込みます。
+
 ## セットアップ
 
 ### 必要要件
@@ -122,6 +128,11 @@ ai_secretary/
 ```bash
 uv run pytest tests/ -v
 ```
+
+主要カバレッジ:
+- `tests/test_todo_repository.py`: SQLiteベースのTODOリポジトリCRUDを検証。
+- `tests/test_todo_api.py`: `/api/todos` の作成/更新/削除フローをFastAPI TestClientで確認。
+- `tests/test_todo_llm_integration.py`: LLM応答の `todoActions` がAI秘書経由で永続化されることを保証。
 
 ## ライセンス
 

@@ -12,6 +12,18 @@ AI Secretary is a local AI assistant system that integrates:
 
 All processing happens locally - no external API calls for core functionality.
 
+## Current Plan
+
+- 進行中のロードマップは `plan/TODO.md` に集約しています。P1→P10の優先度順（簡単なタスクが上）で作業してください。
+- 新しい開発に着手するときは、該当タスクにメモを追加して進捗を可視化し、優先度を勝手に入れ替えないでください。
+- 調査のみで終わる場合も、`plan/TODO.md` の該当項目に分かったことを追記して次の作業者が参照できるようにします。
+
+## Todo Management
+
+- AI/人間双方が共有するTODOリストは `src/todo/`（SQLiteストレージ）と `/api/todos` CRUDエンドポイントで管理します。DBファイルは `data/todo.db` に作成されます。
+- フロントエンドのTODOボード（`frontend/src/App.tsx`）経由で閲覧/追加/更新/完了/削除ができます。必要に応じてUI/UXの改善はこのボードを基点にしてください。
+- `AISecretary` は会話ごとにTODOコンテキストをシステムメッセージとして注入し、LLM応答内の `todoActions` 配列（add/update/complete/delete）を検出してDBへ反映します。音声用JSONはこれまで通り必須キーを維持し、追加情報は `todoActions` にまとめてください。
+
 ## Development Commands
 
 ### Setup and Installation
