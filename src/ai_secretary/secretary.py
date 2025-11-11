@@ -11,17 +11,24 @@ AI秘書のメインモジュール
 import json
 import logging
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import Config
 from .ollama_client import OllamaClient
 from ..coeiroink_client import COEIROINKClient, VoiceParameters, Speaker  # type: ignore
+from ..todo import TodoRepository, TodoStatus, UNSET
 
 try:
     from ..audio_player import AudioPlayer  # type: ignore
 except Exception:  # pragma: no cover - AudioPlayerを利用できない環境向け
     AudioPlayer = None  # type: ignore[assignment]
+
+try:
+    from ..bash_executor import CommandExecutor  # type: ignore
+except Exception:  # pragma: no cover - BashExecutorを利用できない環境向け
+    CommandExecutor = None  # type: ignore[assignment]
 
 
 class AISecretary:
@@ -33,6 +40,7 @@ class AISecretary:
         ollama_client: Optional[OllamaClient] = None,
         coeiroink_client: Optional[COEIROINKClient] = None,
         audio_player: Optional["AudioPlayer"] = None,
+        bash_executor: Optional["CommandExecutor"] = None,
     ):
         """
         初期化
@@ -42,6 +50,7 @@ class AISecretary:
             ollama_client: 依存性注入用のOllamaクライアント
             coeiroink_client: 依存性注入用のCOEIROINKクライアント
             audio_player: 依存性注入用のAudioPlayer
+            bash_executor: 依存性注入用のBashExecutor
         """
         self.config = config or Config.from_yaml()
         self.logger = logging.getLogger(__name__)
@@ -83,6 +92,9 @@ class AISecretary:
         # 会話履歴の初期化
         self.conversation_history: List[Dict[str, str]] = []
 
+        # Todoリポジトリ
+        self.todo_repository = TodoRepository()
+
         # システムプロンプトの設定
         if self.config.system_prompt:
             self.conversation_history.append(
@@ -96,27 +108,55 @@ class AISecretary:
                 {"role": "system", "content": voice_instruction}
             )
 
+        # BashExecutorの初期化
+        self.bash_executor: Optional["CommandExecutor"] = bash_executor
+        if self.bash_executor is None:
+            try:
+                from ..bash_executor import create_executor
+
+                self.bash_executor = create_executor()
+                self.logger.info("BashExecutor initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"BashExecutor初期化失敗（機能は無効化されます）: {e}")
+                self.bash_executor = None
+
+        # BASH実行ガイダンスを追加
+        bash_instruction = self._build_bash_instruction()
+        if bash_instruction and self.bash_executor:
+            self.conversation_history.append({"role": "system", "content": bash_instruction})
+
     def chat(
         self,
         user_message: str,
         return_json: bool = False,
         play_audio: bool = True,
         model: Optional[str] = None,
+        max_bash_retry: int = 2,
+        enable_bash_verification: bool = True,
     ) -> Any:
         """
-        ユーザーメッセージに対して応答
+        ユーザーメッセージに対して応答（3段階BASHフロー対応）
 
         Args:
             user_message: ユーザーからのメッセージ
             return_json: JSON形式で応答を返すか（デフォルト: False、テキストのみ返す）
             play_audio: 生成した音声を即時再生するか
             model: 使用するモデル名（Noneの場合はデフォルトモデルを使用）
+            max_bash_retry: BASH実行の最大再試行回数（デフォルト: 2）
+            enable_bash_verification: BASH検証ステップを有効化（デフォルト: True）
 
         Returns:
             AI秘書からの応答（辞書形式またはテキスト）
         """
         # ユーザーメッセージを履歴に追加
         self.conversation_history.append({"role": "user", "content": user_message})
+
+        # TODOコンテキストを追加
+        todo_message: Optional[Dict[str, str]] = None
+        todo_context = self._build_todo_context()
+        if todo_context:
+            todo_message = {"role": "system", "content": todo_context}
+            self.conversation_history.append(todo_message)
 
         # モデルを一時的に切り替える場合
         original_model = self.ollama_client.model
@@ -129,13 +169,23 @@ class AISecretary:
                 messages=self.conversation_history, stream=False, return_json=True
             )
 
+            self._handle_todo_actions(raw_response)
+
+            # 3段階BASHフロー
+            final_response = self._execute_bash_workflow(
+                user_message=user_message,
+                initial_response=raw_response,
+                max_retry=max_bash_retry,
+                enable_verification=enable_bash_verification
+            )
+
             # アシスタントの応答を履歴に追加（JSON文字列として）
-            response_str = json.dumps(raw_response, ensure_ascii=False)
+            response_str = json.dumps(final_response, ensure_ascii=False)
             self.conversation_history.append(
                 {"role": "assistant", "content": response_str}
             )
 
-            voice_plan = self._extract_voice_plan(raw_response)
+            voice_plan = self._extract_voice_plan(final_response)
             audio_path = None
             if voice_plan is not None:
                 audio_path = self._synthesize_and_optionally_play(
@@ -162,6 +212,11 @@ class AISecretary:
             # モデルを元に戻す
             if model is not None:
                 self.ollama_client.model = original_model
+            if todo_message:
+                try:
+                    self.conversation_history.remove(todo_message)
+                except ValueError:
+                    pass
 
     def reset_conversation(self):
         """会話履歴をリセット"""
@@ -224,11 +279,425 @@ class AISecretary:
             "   - postPhonemeLength (float, seconds after speech, recommended 0.0-1.0).\n"
             "   - outputSamplingRate (int, choose 16000/24000/44100/48000).\n"
             "   - prosodyDetail (array): set [] unless detailed mora timing is explicitly required.\n"
-            "3. Be concise and align tone with the user's instruction.\n"
-            "4. Omit any commentary or explanations outside the JSON.\n"
+            "3. Refer to the TODO context messages in this conversation when planning responses.\n"
+            "4. When a user explicitly requests modifications to the TODO list, include a `todoActions` array "
+            "(optional) describing operations such as add/update/complete/delete while still returning valid "
+            "COEIROINK JSON.\n"
+            "   - Example action: {\"type\":\"add\",\"title\":\"Write report\",\"description\":\"Q2 summary\",\"dueDate\":\"2025-03-01\",\"status\":\"pending\"}\n"
+            "5. Be concise and align tone with the user's instruction.\n"
+            "6. Omit any commentary or explanations outside the JSON.\n"
             "Available COEIROINK speakers and styles:\n"
             f"{speaker_block}"
         )
+
+    def _build_bash_instruction(self) -> str:
+        """BASH実行機能のためのプロンプトを生成"""
+        if not self.bash_executor:
+            return ""
+
+        # ホワイトリストから利用可能なコマンドを取得
+        try:
+            validator = self.bash_executor.validator
+            allowed_commands = sorted(list(validator.allowed_commands))[:50]  # 最大50個表示
+            commands_preview = ", ".join(allowed_commands[:30])
+            if len(allowed_commands) > 30:
+                commands_preview += f"... (他{len(allowed_commands) - 30}個)"
+        except Exception:
+            commands_preview = "ls, pwd, cat, mkdir, git, uv, など"
+
+        return (
+            "## BASHコマンド実行機能\n\n"
+            "ファイル操作、情報取得、外部ツール呼び出しが必要な場合、bashActionsフィールドを使用してください。\n\n"
+            "### 利用可能なコマンド（抜粋）\n"
+            f"{commands_preview}\n\n"
+            "### 応答例\n"
+            "```json\n"
+            "{\n"
+            '  "text": "現在のディレクトリを確認します。",\n'
+            '  "bashActions": [\n'
+            '    {"command": "pwd", "reason": "現在のディレクトリを確認"}\n'
+            "  ],\n"
+            '  "speakerUuid": "...",\n'
+            "  ...\n"
+            "}\n"
+            "```\n\n"
+            "### 制約事項\n"
+            "- ホワイトリストに登録されたコマンドのみ実行可能\n"
+            "- タイムアウトは30秒です\n"
+            f"- ルートディレクトリ外への移動は制限されています（root: {self.bash_executor.root_dir}）\n"
+            "- 危険なコマンド（rm -rf、chmod 777など）は実行できません\n"
+        )
+
+    def _process_bash_actions(self, actions: list) -> list:
+        """
+        bashActionsを処理し、実行結果を返す
+
+        Args:
+            actions: bashActions配列
+
+        Returns:
+            実行結果の配列 [{"command": str, "result": dict, "error": Optional[str]}]
+        """
+        if not self.bash_executor:
+            self.logger.warning("BashExecutor未初期化のためbashActionsをスキップ")
+            return []
+
+        results = []
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+
+            command = action.get("command", "")
+            reason = action.get("reason", "")
+
+            if not command:
+                continue
+
+            self.logger.info(f"Executing bash command: {command} (reason: {reason})")
+
+            try:
+                result = self.bash_executor.execute(command)
+                results.append(
+                    {"command": command, "reason": reason, "result": result, "error": None}
+                )
+                self.logger.info(
+                    f"Command executed successfully: {command} (exit_code: {result['exit_code']})"
+                )
+
+            except Exception as e:
+                self.logger.error(f"Bash execution failed: {command} - {e}")
+                results.append(
+                    {"command": command, "reason": reason, "result": None, "error": str(e)}
+                )
+
+        return results
+
+    def _format_bash_results(self, results: list) -> str:
+        """
+        BASH実行結果を人間可読な形式に整形
+
+        Args:
+            results: _process_bash_actions()の返却値
+
+        Returns:
+            整形されたテキスト
+        """
+        formatted = []
+        for r in results:
+            cmd = r["command"]
+            reason = r.get("reason", "")
+
+            if r["error"]:
+                formatted.append(
+                    f"❌ コマンド: {cmd}\n   理由: {reason}\n   エラー: {r['error']}"
+                )
+            else:
+                result = r["result"]
+                stdout = result["stdout"].strip() if result["stdout"] else "(出力なし)"
+                stderr = result["stderr"].strip() if result["stderr"] else "(エラー出力なし)"
+
+                # 出力が長い場合は切り詰め
+                max_output_len = 1000
+                if len(stdout) > max_output_len:
+                    stdout = stdout[:max_output_len] + "\n... (省略)"
+                if len(stderr) > max_output_len:
+                    stderr = stderr[:max_output_len] + "\n... (省略)"
+
+                formatted.append(
+                    f"✅ コマンド: {cmd}\n"
+                    f"   理由: {reason}\n"
+                    f"   終了コード: {result['exit_code']}\n"
+                    f"   作業ディレクトリ: {result['cwd']}\n"
+                    f"   標準出力:\n{stdout}\n"
+                    f"   標準エラー出力:\n{stderr}"
+                )
+
+        return "\n\n".join(formatted)
+
+    def _bash_step2_generate_response(
+        self, user_message: str, bash_results: list
+    ) -> dict:
+        """
+        3段階フロー - ステップ2: BASH実行結果を踏まえた回答生成
+        
+        Args:
+            user_message: ユーザーの質問
+            bash_results: _process_bash_actions()の結果
+        
+        Returns:
+            LLM応答
+        """
+        # 実行結果を踏まえた回答生成を促すプロンプトを追加
+        result_context = self._format_bash_results(bash_results)
+        self.conversation_history.append({
+            "role": "system",
+            "content": (
+                f"BASHコマンド実行結果:\n\n{result_context}\n\n"
+                "上記の実行結果を踏まえて、ユーザーの質問に適切に回答してください。"
+            )
+        })
+        
+        # 再度LLMを呼び出して回答生成
+        response = self.ollama_client.chat(
+            messages=self.conversation_history,
+            stream=False,
+            return_json=True
+        )
+        
+        # アシスタントの応答を履歴に追加
+        response_str = json.dumps(response, ensure_ascii=False)
+        self.conversation_history.append({"role": "assistant", "content": response_str})
+        
+        self.logger.info("BASH Step 2: Response generated based on execution results")
+        return response
+
+    def _bash_step3_verify(
+        self, user_message: str, bash_results: list, response: dict
+    ) -> dict:
+        """
+        3段階フロー - ステップ3: タスク達成度と回答の整合性を検証
+        
+        Args:
+            user_message: ユーザーの質問
+            bash_results: BASH実行結果
+            response: ステップ2で生成した回答
+        
+        Returns:
+            {"success": bool, "reason": str, "suggestion": str}
+        """
+        verification_prompt = self._build_verification_prompt(
+            user_message, bash_results, response
+        )
+        
+        self.conversation_history.append({
+            "role": "system",
+            "content": verification_prompt
+        })
+        
+        # 検証用LLM呼び出し
+        verification = self.ollama_client.chat(
+            messages=self.conversation_history,
+            stream=False,
+            return_json=True
+        )
+        
+        # 検証結果を履歴から削除（次回に影響させない）
+        self.conversation_history.pop()
+        
+        self.logger.info(
+            f"BASH Step 3: Verification result - success: {verification.get('success', False)}"
+        )
+        return verification
+
+    def _build_verification_prompt(
+        self, user_message: str, bash_results: list, response: dict
+    ) -> str:
+        """検証用プロンプトを生成"""
+        bash_summary = "\n".join([
+            f"- コマンド: `{r['command']}`, "
+            f"終了コード: {r['result']['exit_code'] if r['result'] else 'エラー'}, "
+            f"エラー: {r.get('error', 'なし')}"
+            for r in bash_results
+        ])
+        
+        return (
+            "## タスク検証\n\n"
+            "以下の内容を検証してください:\n\n"
+            f"**ユーザーの質問**: {user_message}\n\n"
+            f"**実行したBASHコマンド**:\n{bash_summary}\n\n"
+            f"**生成した回答**: {response.get('text', '')}\n\n"
+            "### 検証項目\n"
+            "1. BASHコマンドは正常に実行されましたか？（exit_code=0）\n"
+            "2. 回答はBASHコマンドの実行結果を正しく反映していますか？\n"
+            "3. 回答はユーザーの質問に適切に答えていますか？\n\n"
+            "以下のJSON形式で検証結果を返してください:\n"
+            "```json\n"
+            "{\n"
+            '  "success": true,  // 全ての検証項目が合格ならtrue\n'
+            '  "reason": "検証結果の詳細説明",\n'
+            '  "suggestion": "失敗時の改善提案（成功時は空文字）"\n'
+            "}\n"
+            "```"
+        )
+
+    def _execute_bash_workflow(
+        self,
+        user_message: str,
+        initial_response: dict,
+        max_retry: int = 2,
+        enable_verification: bool = True
+    ) -> dict:
+        """
+        3段階BASHワークフローを実行
+        
+        Args:
+            user_message: ユーザーの質問
+            initial_response: ステップ1のLLM応答
+            max_retry: 最大再試行回数
+            enable_verification: 検証ステップを有効化
+        
+        Returns:
+            最終的なLLM応答
+        """
+        bash_actions = initial_response.get("bashActions", [])
+        
+        # BASHコマンドが不要な場合はそのまま返す
+        if not bash_actions or not isinstance(bash_actions, list) or not self.bash_executor:
+            return initial_response
+        
+        retry_count = 0
+        current_response = initial_response
+        
+        while retry_count <= max_retry:
+            # ステップ1で既にコマンドは生成されているので、実行のみ
+            bash_results = self._process_bash_actions(bash_actions)
+            
+            if not bash_results:
+                # 実行結果がない場合はそのまま返す
+                return current_response
+            
+            # ステップ2: 実行結果を踏まえた回答生成
+            step2_response = self._bash_step2_generate_response(user_message, bash_results)
+            
+            # 検証が無効な場合はステップ2の結果を返す
+            if not enable_verification:
+                self.logger.info("BASH workflow completed (verification disabled)")
+                return step2_response
+            
+            # ステップ3: 検証
+            verification = self._bash_step3_verify(user_message, bash_results, step2_response)
+            
+            if verification.get("success", False):
+                # 検証成功
+                self.logger.info(f"BASH workflow succeeded (attempt {retry_count + 1})")
+                return step2_response
+            
+            # 検証失敗
+            retry_count += 1
+            reason = verification.get("reason", "不明なエラー")
+            suggestion = verification.get("suggestion", "")
+            
+            self.logger.warning(
+                f"BASH verification failed (attempt {retry_count}/{max_retry + 1}): {reason}"
+            )
+            
+            if retry_count <= max_retry:
+                # 再試行用のフィードバックを追加
+                self.conversation_history.append({
+                    "role": "system",
+                    "content": (
+                        f"前回のアプローチは失敗しました。\n"
+                        f"理由: {reason}\n"
+                        f"改善提案: {suggestion}\n"
+                        "別のコマンドまたはアプローチを試してください。"
+                    )
+                })
+                
+                # 再度ステップ1から（新しいコマンドを生成）
+                retry_response = self.ollama_client.chat(
+                    messages=self.conversation_history,
+                    stream=False,
+                    return_json=True
+                )
+                
+                bash_actions = retry_response.get("bashActions", [])
+                if not bash_actions:
+                    # コマンドが生成されなかった場合は失敗として扱う
+                    self.logger.warning("No bash actions generated in retry")
+                    break
+                
+                current_response = retry_response
+        
+        # 最大試行回数超過
+        self.logger.error(f"BASH workflow failed after {max_retry + 1} attempts")
+        return {
+            **step2_response,
+            "text": f"申し訳ございません。タスクの実行に失敗しました。理由: {reason}"
+        }
+
+    def _build_todo_context(self) -> str:
+        """現在のTodoリストをシステムメッセージとして構築。"""
+        items = self.todo_repository.list()
+        if not items:
+            return "TODOリスト: 現在登録されている項目はありません。"
+
+        lines = ["TODOリストの現状（id / status / due / title / description）:"]
+        for item in items:
+            due = item.due_date or "未設定"
+            description = item.description.strip()
+            description = description if description else "説明なし"
+            lines.append(
+                f"- [{item.id}] {item.status.value} / {due} / {item.title} / {description}"
+            )
+        lines.append("必要に応じてTodoを要約し、完了状況や期限を踏まえて回答してください。")
+        return "\n".join(lines)
+
+    def _handle_todo_actions(self, response: Dict[str, Any]) -> None:
+        """LLM応答内のTodoアクションを解釈しDBへ反映。"""
+        actions = response.get("todoActions")
+        if not isinstance(actions, list):
+            return
+
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            action_type = action.get("type")
+            try:
+                if action_type == "add":
+                    title = str(action.get("title", "")).strip()
+                    if not title:
+                        continue
+                    self.todo_repository.create(
+                        title=title,
+                        description=str(action.get("description", "")).strip(),
+                        due_date=self._normalize_due_date(action.get("dueDate")),
+                        status=TodoStatus(
+                            action.get("status", TodoStatus.PENDING.value)
+                        ),
+                    )
+                elif action_type == "update":
+                    todo_id = int(action.get("id"))
+                    title = action["title"] if "title" in action else None
+                    description = action["description"] if "description" in action else None
+                    due_date_value = (
+                        self._normalize_due_date(action.get("dueDate"))
+                        if "dueDate" in action
+                        else UNSET
+                    )
+                    status_value = (
+                        TodoStatus(action["status"]) if action.get("status") else None
+                    )
+                    self.todo_repository.update(
+                        todo_id,
+                        title=title,
+                        description=description,
+                        due_date=due_date_value,
+                        status=status_value,
+                    )
+                elif action_type == "complete":
+                    todo_id = int(action.get("id"))
+                    self.todo_repository.update(
+                        todo_id, status=TodoStatus.DONE
+                    )
+                elif action_type == "delete":
+                    todo_id = int(action.get("id"))
+                    self.todo_repository.delete(todo_id)
+            except Exception as exc:
+                self.logger.warning("TODOアクション適用に失敗: %s", exc)
+
+    @staticmethod
+    def _normalize_due_date(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        try:
+            if isinstance(value, date):
+                return value.isoformat()
+            text = str(value).strip()
+            if not text:
+                return None
+            return date.fromisoformat(text).isoformat()
+        except Exception:
+            return None
 
     def _extract_voice_plan(self, response: Any) -> Optional[Dict[str, Any]]:
         """OllamaからのJSONレスポンスを検証し、音声合成に必要な形式へ変換"""
