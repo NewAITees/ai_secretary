@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional
 from .config import Config
 from .ollama_client import OllamaClient
 from ..coeiroink_client import COEIROINKClient, VoiceParameters, Speaker  # type: ignore
-from ..todo import TodoRepository, TodoStatus, UNSET
 
 try:
     from ..audio_player import AudioPlayer  # type: ignore
@@ -92,9 +91,6 @@ class AISecretary:
         # 会話履歴の初期化
         self.conversation_history: List[Dict[str, str]] = []
 
-        # Todoリポジトリ
-        self.todo_repository = TodoRepository()
-
         # システムプロンプトの設定
         if self.config.system_prompt:
             self.conversation_history.append(
@@ -155,13 +151,6 @@ class AISecretary:
         # ユーザーメッセージを履歴に追加
         self.conversation_history.append({"role": "user", "content": user_message})
 
-        # TODOコンテキストを追加
-        todo_message: Optional[Dict[str, str]] = None
-        todo_context = self._build_todo_context()
-        if todo_context:
-            todo_message = {"role": "system", "content": todo_context}
-            self.conversation_history.append(todo_message)
-
         # モデルを一時的に切り替える場合
         original_model = self.ollama_client.model
         if model is not None:
@@ -173,8 +162,6 @@ class AISecretary:
                 messages=self.conversation_history, stream=False, return_json=True
             )
 
-            self._handle_todo_actions(raw_response)
-
             # 3段階BASHフロー
             final_response = self._execute_bash_workflow(
                 user_message=user_message,
@@ -182,10 +169,6 @@ class AISecretary:
                 max_retry=max_bash_retry,
                 enable_verification=enable_bash_verification
             )
-
-            # Step2で追加されたTODO actionsも処理
-            if final_response != raw_response:
-                self._handle_todo_actions(final_response)
 
             # アシスタントの応答を履歴に追加（JSON文字列として）
             response_str = json.dumps(final_response, ensure_ascii=False)
@@ -223,11 +206,6 @@ class AISecretary:
             # モデルを元に戻す
             if model is not None:
                 self.ollama_client.model = original_model
-            if todo_message:
-                try:
-                    self.conversation_history.remove(todo_message)
-                except ValueError:
-                    pass
 
     def reset_conversation(self):
         """会話履歴をリセット"""
@@ -290,13 +268,8 @@ class AISecretary:
             "   - postPhonemeLength (float, seconds after speech, recommended 0.0-1.0).\n"
             "   - outputSamplingRate (int, choose 16000/24000/44100/48000).\n"
             "   - prosodyDetail (array): set [] unless detailed mora timing is explicitly required.\n"
-            "3. Refer to the TODO context messages in this conversation when planning responses.\n"
-            "4. When a user explicitly requests modifications to the TODO list, include a `todoActions` array "
-            "(optional) describing operations such as add/update/complete/delete while still returning valid "
-            "COEIROINK JSON.\n"
-            "   - Example action: {\"type\":\"add\",\"title\":\"Write report\",\"description\":\"Q2 summary\",\"dueDate\":\"2025-03-01\",\"status\":\"pending\"}\n"
-            "5. Be concise and align tone with the user's instruction.\n"
-            "6. Omit any commentary or explanations outside the JSON.\n"
+            "3. Be concise and align tone with the user's instruction.\n"
+            "4. Omit any commentary or explanations outside the JSON.\n"
             "Available COEIROINK speakers and styles:\n"
             f"{speaker_block}"
         )
@@ -730,89 +703,6 @@ class AISecretary:
             "text": f"申し訳ございません。タスクの実行に失敗しました。理由: {reason}"
         }
 
-    def _build_todo_context(self) -> str:
-        """現在のTodoリストをシステムメッセージとして構築。"""
-        items = self.todo_repository.list()
-        if not items:
-            return "TODOリスト: 現在登録されている項目はありません。"
-
-        lines = ["TODOリストの現状（id / status / due / title / description）:"]
-        for item in items:
-            due = item.due_date or "未設定"
-            description = item.description.strip()
-            description = description if description else "説明なし"
-            lines.append(
-                f"- [{item.id}] {item.status.value} / {due} / {item.title} / {description}"
-            )
-        lines.append("必要に応じてTodoを要約し、完了状況や期限を踏まえて回答してください。")
-        return "\n".join(lines)
-
-    def _handle_todo_actions(self, response: Dict[str, Any]) -> None:
-        """LLM応答内のTodoアクションを解釈しDBへ反映。"""
-        actions = response.get("todoActions")
-        if not isinstance(actions, list):
-            return
-
-        for action in actions:
-            if not isinstance(action, dict):
-                continue
-            action_type = action.get("type")
-            try:
-                if action_type == "add":
-                    title = str(action.get("title", "")).strip()
-                    if not title:
-                        continue
-                    self.todo_repository.create(
-                        title=title,
-                        description=str(action.get("description", "")).strip(),
-                        due_date=self._normalize_due_date(action.get("dueDate")),
-                        status=TodoStatus(
-                            action.get("status", TodoStatus.PENDING.value)
-                        ),
-                    )
-                elif action_type == "update":
-                    todo_id = int(action.get("id"))
-                    title = action["title"] if "title" in action else None
-                    description = action["description"] if "description" in action else None
-                    due_date_value = (
-                        self._normalize_due_date(action.get("dueDate"))
-                        if "dueDate" in action
-                        else UNSET
-                    )
-                    status_value = (
-                        TodoStatus(action["status"]) if action.get("status") else None
-                    )
-                    self.todo_repository.update(
-                        todo_id,
-                        title=title,
-                        description=description,
-                        due_date=due_date_value,
-                        status=status_value,
-                    )
-                elif action_type == "complete":
-                    todo_id = int(action.get("id"))
-                    self.todo_repository.update(
-                        todo_id, status=TodoStatus.DONE
-                    )
-                elif action_type == "delete":
-                    todo_id = int(action.get("id"))
-                    self.todo_repository.delete(todo_id)
-            except Exception as exc:
-                self.logger.warning("TODOアクション適用に失敗: %s", exc)
-
-    @staticmethod
-    def _normalize_due_date(value: Optional[str]) -> Optional[str]:
-        if not value:
-            return None
-        try:
-            if isinstance(value, date):
-                return value.isoformat()
-            text = str(value).strip()
-            if not text:
-                return None
-            return date.fromisoformat(text).isoformat()
-        except Exception:
-            return None
 
     def _extract_voice_plan(self, response: Any) -> Optional[Dict[str, Any]]:
         """OllamaからのJSONレスポンスを検証し、音声合成に必要な形式へ変換"""
