@@ -1,10 +1,16 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ChatResponsePayload,
+  TodoItem,
+  TodoStatus,
+  createTodo,
   getAvailableModels,
   getPendingProactiveMessages,
+  getTodos,
   getProactiveChatStatus,
+  updateTodo,
+  deleteTodo,
   postChatMessage,
   toggleProactiveChat,
 } from './api';
@@ -27,6 +33,14 @@ function createId(): string {
   return crypto.randomUUID();
 }
 
+const statusLabels: Record<TodoStatus, string> = {
+  pending: '未着手',
+  in_progress: '進行中',
+  done: '完了',
+};
+
+const statusOptions: TodoStatus[] = ['pending', 'in_progress', 'done'];
+
 export default function App(): JSX.Element {
   const [messages, setMessages] = useState<MessageEntry[]>([]);
   const [input, setInput] = useState('');
@@ -36,6 +50,21 @@ export default function App(): JSX.Element {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [proactiveChatEnabled, setProactiveChatEnabled] = useState(false);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [todoLoading, setTodoLoading] = useState(false);
+  const [todoError, setTodoError] = useState<string | null>(null);
+  const [updatingTodoIds, setUpdatingTodoIds] = useState<Set<number>>(new Set());
+  const [todoForm, setTodoForm] = useState<{
+    title: string;
+    description: string;
+    dueDate: string;
+    status: TodoStatus;
+  }>({
+    title: '',
+    description: '',
+    dueDate: '',
+    status: 'pending',
+  });
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => a.timestamp - b.timestamp),
@@ -78,6 +107,24 @@ export default function App(): JSX.Element {
     }
     initProactiveChat();
   }, []);
+
+  const refreshTodos = useCallback(async () => {
+    setTodoLoading(true);
+    try {
+      const data = await getTodos();
+      setTodos(data);
+      setTodoError(null);
+    } catch (err) {
+      console.error('Failed to fetch todos:', err);
+      setTodoError('TODOリストの取得に失敗しました。');
+    } finally {
+      setTodoLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshTodos();
+  }, [refreshTodos]);
 
   // 能動会話が有効な場合、定期的に保留メッセージをポーリング
   useEffect(() => {
@@ -169,6 +216,87 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function handleTodoSubmit(evt: FormEvent<HTMLFormElement>): Promise<void> {
+    evt.preventDefault();
+    if (!todoForm.title.trim()) {
+      setTodoError('タイトルを入力してください');
+      return;
+    }
+
+    try {
+      await createTodo({
+        title: todoForm.title.trim(),
+        description: todoForm.description.trim(),
+        due_date: todoForm.dueDate ? todoForm.dueDate : null,
+        status: todoForm.status,
+      });
+      setTodoForm({
+        title: '',
+        description: '',
+        dueDate: '',
+        status: 'pending',
+      });
+      setTodoError(null);
+      await refreshTodos();
+    } catch (err) {
+      console.error('Failed to create todo:', err);
+      const message = err instanceof Error ? err.message : 'TODOの作成に失敗しました。';
+      setTodoError(message);
+    }
+  }
+
+  async function updateTodoWithState(
+    todoId: number,
+    updater: () => Promise<void>,
+  ): Promise<void> {
+    setUpdatingTodoIds(prev => {
+      const next = new Set(prev);
+      next.add(todoId);
+      return next;
+    });
+    try {
+      await updater();
+      await refreshTodos();
+    } catch (err) {
+      console.error('Failed to update todo:', err);
+      const message = err instanceof Error ? err.message : 'TODOの更新に失敗しました。';
+      setTodoError(message);
+    } finally {
+      setUpdatingTodoIds(prev => {
+        const next = new Set(prev);
+        next.delete(todoId);
+        return next;
+      });
+    }
+  }
+
+  function isTodoUpdating(todoId: number): boolean {
+    return updatingTodoIds.has(todoId);
+  }
+
+  async function handleTodoStatusChange(todoId: number, status: TodoStatus): Promise<void> {
+    await updateTodoWithState(todoId, () => updateTodo(todoId, { status }));
+  }
+
+  async function handleTodoDueDateChange(todoId: number, value: string): Promise<void> {
+    await updateTodoWithState(todoId, () => updateTodo(todoId, { due_date: value || null }));
+  }
+
+  async function handleTodoDelete(todoId: number): Promise<void> {
+    await updateTodoWithState(todoId, () => deleteTodo(todoId));
+  }
+
+  const sortedTodos = useMemo(() => {
+    return [...todos].sort((a, b) => {
+      if (a.status === b.status) {
+        return (a.due_date ?? '').localeCompare(b.due_date ?? '');
+      }
+      if (a.status === 'done') return 1;
+      if (b.status === 'done') return -1;
+      return a.status.localeCompare(b.status);
+    });
+  }, [todos]);
+
   return (
     <div className="app">
       <header className="app__header">
@@ -240,6 +368,148 @@ export default function App(): JSX.Element {
               ))}
             </ul>
           )}
+        </section>
+        <section className="todos">
+          <div className="todos__header">
+            <h2>TODOリスト</h2>
+            <button
+              type="button"
+              className="todos__refresh"
+              onClick={() => refreshTodos()}
+              disabled={todoLoading}
+            >
+              {todoLoading ? '更新中…' : '再読み込み'}
+            </button>
+          </div>
+          <form className="todo-form" onSubmit={handleTodoSubmit}>
+            <div className="todo-form__row">
+              <label>
+                タイトル
+                <input
+                  type="text"
+                  value={todoForm.title}
+                  onChange={event =>
+                    setTodoForm(prev => ({ ...prev, title: event.target.value }))
+                  }
+                  required
+                />
+              </label>
+              <label>
+                期限
+                <input
+                  type="date"
+                  value={todoForm.dueDate}
+                  onChange={event =>
+                    setTodoForm(prev => ({ ...prev, dueDate: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                状態
+                <select
+                  value={todoForm.status}
+                  onChange={event =>
+                    setTodoForm(prev => ({
+                      ...prev,
+                      status: event.target.value as TodoStatus,
+                    }))
+                  }
+                >
+                  {statusOptions.map(status => (
+                    <option key={status} value={status}>
+                      {statusLabels[status]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="todo-form__description">
+              詳細
+              <textarea
+                rows={2}
+                value={todoForm.description}
+                onChange={event =>
+                  setTodoForm(prev => ({ ...prev, description: event.target.value }))
+                }
+              />
+            </label>
+            <button type="submit" className="todo-form__submit">
+              追加
+            </button>
+          </form>
+          {todoError && <p className="todos__error">{todoError}</p>}
+          <div className="todo-list">
+            {sortedTodos.length === 0 ? (
+              <p className="todos__placeholder">
+                TODOは登録されていません。まずは上のフォームから追加してください。
+              </p>
+            ) : (
+              sortedTodos.map(todo => (
+                <article key={todo.id} className={`todo-card todo-card--${todo.status}`}>
+                  <div className="todo-card__header">
+                    <div>
+                      <span className="todo-card__status">{statusLabels[todo.status]}</span>
+                      <h3>{todo.title}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="todo-card__delete"
+                      onClick={() => handleTodoDelete(todo.id)}
+                      disabled={isTodoUpdating(todo.id)}
+                    >
+                      削除
+                    </button>
+                  </div>
+                  <p className="todo-card__description">
+                    {todo.description || '説明は設定されていません。'}
+                  </p>
+                  <div className="todo-card__controls">
+                    <label>
+                      期限
+                      <input
+                        type="date"
+                        value={todo.due_date ?? ''}
+                        onChange={event =>
+                          handleTodoDueDateChange(todo.id, event.target.value)
+                        }
+                        disabled={isTodoUpdating(todo.id)}
+                      />
+                    </label>
+                    <label>
+                      状態
+                      <select
+                        value={todo.status}
+                        onChange={event =>
+                          handleTodoStatusChange(todo.id, event.target.value as TodoStatus)
+                        }
+                        disabled={isTodoUpdating(todo.id)}
+                      >
+                        {statusOptions.map(status => (
+                          <option key={status} value={status}>
+                            {statusLabels[status]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {todo.status !== 'done' && (
+                      <button
+                        type="button"
+                        className="todo-card__complete"
+                        onClick={() => handleTodoStatusChange(todo.id, 'done')}
+                        disabled={isTodoUpdating(todo.id)}
+                      >
+                        完了にする
+                      </button>
+                    )}
+                  </div>
+                  <footer className="todo-card__footer">
+                    <small>ID: {todo.id}</small>
+                    <small>更新: {new Date(todo.updated_at).toLocaleString()}</small>
+                  </footer>
+                </article>
+              ))
+            )}
+          </div>
         </section>
       </main>
 
