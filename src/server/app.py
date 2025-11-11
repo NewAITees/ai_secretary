@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import threading
+import uuid
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +15,7 @@ from src.ai_secretary.config import Config
 from src.ai_secretary.scheduler import ProactiveChatScheduler
 from src.ai_secretary.prompt_templates import ProactivePromptManager
 from src.ai_secretary.secretary import AISecretary
+from src.todo import TodoItem, TodoRepository, TodoStatus, UNSET
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,132 @@ class ProactiveChatPendingResponse(BaseModel):
     messages: List[ProactiveChatMessage]
 
 
+class TodoResponse(BaseModel):
+    """Serialized todo item."""
+
+    id: int
+    title: str
+    description: str
+    status: TodoStatus
+    due_date: Optional[date] = None
+    created_at: str
+    updated_at: str
+
+    class Config:
+        use_enum_values = True
+
+
+class TodoCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    due_date: Optional[date] = Field(default=None, description="ISO date (YYYY-MM-DD)")
+    status: TodoStatus = Field(default=TodoStatus.PENDING)
+
+
+class TodoUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    due_date: Optional[date] = Field(default=None)
+    status: Optional[TodoStatus] = Field(default=None)
+
+
+class BashApprovalRequest(BaseModel):
+    """Bash command approval request."""
+
+    request_id: str
+    command: str
+    reason: str
+    timestamp: float
+
+
+class BashApprovalResponse(BaseModel):
+    """Response for bash approval endpoint."""
+
+    approved: bool
+    message: str
+
+
+class BashPendingResponse(BaseModel):
+    """Response for pending bash approvals."""
+
+    requests: List[BashApprovalRequest]
+
+
+class BashApprovalQueue:
+    """Thread-safe queue for bash approval requests."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._requests: Dict[str, Dict[str, Any]] = {}
+        self._events: Dict[str, threading.Event] = {}
+
+    def add_request(self, command: str, reason: str) -> str:
+        """Add a new approval request and return request ID."""
+        request_id = str(uuid.uuid4())
+        with self._lock:
+            self._requests[request_id] = {
+                "command": command,
+                "reason": reason,
+                "timestamp": asyncio.get_event_loop().time(),
+            }
+            self._events[request_id] = threading.Event()
+        logger.info(f"Approval request added: {request_id}")
+        return request_id
+
+    def get_pending_requests(self) -> List[BashApprovalRequest]:
+        """Get all pending approval requests."""
+        with self._lock:
+            return [
+                BashApprovalRequest(
+                    request_id=req_id,
+                    command=req["command"],
+                    reason=req["reason"],
+                    timestamp=req["timestamp"],
+                )
+                for req_id, req in self._requests.items()
+            ]
+
+    def approve(self, request_id: str) -> bool:
+        """Approve a request. Returns True if request was found."""
+        with self._lock:
+            if request_id not in self._requests:
+                return False
+            self._requests[request_id]["approved"] = True
+            if request_id in self._events:
+                self._events[request_id].set()
+        logger.info(f"Request approved: {request_id}")
+        return True
+
+    def reject(self, request_id: str) -> bool:
+        """Reject a request. Returns True if request was found."""
+        with self._lock:
+            if request_id not in self._requests:
+                return False
+            self._requests[request_id]["approved"] = False
+            if request_id in self._events:
+                self._events[request_id].set()
+        logger.info(f"Request rejected: {request_id}")
+        return True
+
+    def wait_for_approval(self, request_id: str, timeout: float = 300.0) -> bool:
+        """Wait for approval decision. Returns True if approved, False if rejected or timeout."""
+        event = self._events.get(request_id)
+        if not event:
+            return False
+
+        event.wait(timeout=timeout)
+
+        with self._lock:
+            if request_id not in self._requests:
+                return False
+            approved = self._requests[request_id].get("approved", False)
+            # Clean up after decision
+            del self._requests[request_id]
+            del self._events[request_id]
+
+        return approved
+
+
 @lru_cache(maxsize=1)
 def get_secretary() -> AISecretary:
     """Lazily create a singleton AISecretary instance."""
@@ -119,6 +249,37 @@ def get_scheduler() -> ProactiveChatScheduler:
     )
     scheduler.start()  # スケジューラーを起動
     return scheduler
+
+
+@lru_cache(maxsize=1)
+def get_todo_repository() -> TodoRepository:
+    """Singleton TodoRepository."""
+    return TodoRepository()
+
+
+@lru_cache(maxsize=1)
+def get_bash_approval_queue() -> BashApprovalQueue:
+    """Singleton BashApprovalQueue."""
+    return BashApprovalQueue()
+
+
+def serialize_todo(item: TodoItem) -> TodoResponse:
+    """Convert domain TodoItem to API response."""
+    due_date_value = None
+    if item.due_date:
+        try:
+            due_date_value = date.fromisoformat(item.due_date)
+        except ValueError:
+            due_date_value = None
+    return TodoResponse(
+        id=item.id,
+        title=item.title,
+        description=item.description,
+        status=item.status,
+        due_date=due_date_value,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
 
 
 def create_app() -> FastAPI:
@@ -207,6 +368,111 @@ def create_app() -> FastAPI:
         except Exception as exc:  # pragma: no cover - runtime diagnostics
             logger.exception("Failed to get pending messages: %s", exc)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/api/todos", response_model=List[TodoResponse])
+    async def list_todos() -> List[TodoResponse]:
+        """List todos ordered by status/due date."""
+        repo = get_todo_repository()
+        try:
+            todos = await asyncio.to_thread(repo.list)
+            return [serialize_todo(todo) for todo in todos]
+        except Exception as exc:
+            logger.exception("Failed to list todos: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to list todos") from exc
+
+    @app.post("/api/todos", response_model=TodoResponse)
+    async def create_todo(request: TodoCreateRequest) -> TodoResponse:
+        """Create a new todo."""
+        repo = get_todo_repository()
+        try:
+            todo = await asyncio.to_thread(
+                repo.create,
+                request.title,
+                request.description or "",
+                request.due_date.isoformat() if request.due_date else None,
+                request.status,
+            )
+            return serialize_todo(todo)
+        except Exception as exc:
+            logger.exception("Failed to create todo: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to create todo") from exc
+
+    @app.patch("/api/todos/{todo_id}", response_model=TodoResponse)
+    async def update_todo(todo_id: int, request: TodoUpdateRequest) -> TodoResponse:
+        """Update an existing todo."""
+        repo = get_todo_repository()
+        try:
+            payload = request.model_dump(exclude_unset=True)
+            todo = await asyncio.to_thread(
+                repo.update,
+                todo_id,
+                title=payload.get("title"),
+                description=payload.get("description"),
+                due_date=payload["due_date"].isoformat()
+                if "due_date" in payload and payload["due_date"] is not None
+                else (None if "due_date" in payload else UNSET),
+                status=payload.get("status"),
+            )
+            if not todo:
+                raise HTTPException(status_code=404, detail="Todo not found")
+            return serialize_todo(todo)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to update todo: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to update todo") from exc
+
+    @app.delete("/api/todos/{todo_id}")
+    async def delete_todo(todo_id: int) -> Dict[str, bool]:
+        """Delete a todo."""
+        repo = get_todo_repository()
+        try:
+            deleted = await asyncio.to_thread(repo.delete, todo_id)
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Todo not found")
+            return {"deleted": True}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to delete todo: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to delete todo") from exc
+
+    @app.get("/api/bash/pending", response_model=BashPendingResponse)
+    async def get_pending_bash_approvals() -> BashPendingResponse:
+        """Get pending bash command approval requests."""
+        queue = get_bash_approval_queue()
+        try:
+            requests = queue.get_pending_requests()
+            return BashPendingResponse(requests=requests)
+        except Exception as exc:
+            logger.exception("Failed to get pending bash approvals: %s", exc)
+            raise HTTPException(
+                status_code=500, detail="Failed to get pending approvals"
+            ) from exc
+
+    @app.post("/api/bash/approve/{request_id}", response_model=BashApprovalResponse)
+    async def approve_bash_command(request_id: str, approved: bool) -> BashApprovalResponse:
+        """Approve or reject a bash command execution request."""
+        queue = get_bash_approval_queue()
+        try:
+            if approved:
+                success = queue.approve(request_id)
+                message = "Command approved" if success else "Request not found"
+            else:
+                success = queue.reject(request_id)
+                message = "Command rejected" if success else "Request not found"
+
+            if not success:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            return BashApprovalResponse(approved=approved, message=message)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to approve/reject bash command: %s", exc)
+            raise HTTPException(
+                status_code=500, detail="Failed to process approval"
+            ) from exc
 
     return app
 

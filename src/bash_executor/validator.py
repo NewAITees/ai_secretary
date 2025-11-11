@@ -9,6 +9,7 @@ Design Reference: doc/design/bash_executor.md
 import re
 import shlex
 import logging
+from typing import Optional, Callable
 
 from .exceptions import CommandNotAllowedError, BlockedPatternError
 
@@ -19,23 +20,32 @@ logger = logging.getLogger(__name__)
 class CommandValidator:
     """コマンドの安全性を検証するクラス"""
 
-    def __init__(self, allowed_commands: list[str], block_patterns: list[str]) -> None:
+    def __init__(
+        self,
+        allowed_commands: list[str],
+        block_patterns: list[str],
+        approval_callback: Optional[Callable[[str, str], bool]] = None,
+    ) -> None:
         """
         初期化
 
         Args:
             allowed_commands: 許可されたコマンドのリスト
             block_patterns: ブロックするパターンのリスト
+            approval_callback: ホワイトリスト外コマンドの承認コールバック
+                              (command: str, reason: str) -> bool
         """
         self.allowed_commands = set(allowed_commands)
         self.block_patterns = block_patterns
+        self.approval_callback = approval_callback
 
-    def validate(self, command: str) -> None:
+    def validate(self, command: str, reason: str = "") -> None:
         """
         コマンドを検証
 
         Args:
             command: 検証するコマンド
+            reason: コマンドの実行理由（承認リクエスト用）
 
         Raises:
             ValueError: コマンドが空の場合
@@ -49,7 +59,7 @@ class CommandValidator:
         self._check_blocked_patterns(command)
 
         # ホワイトリストチェック
-        self._check_whitelist(command)
+        self._check_whitelist(command, reason)
 
     def _check_blocked_patterns(self, command: str) -> None:
         """
@@ -66,12 +76,13 @@ class CommandValidator:
                 logger.warning(f"ブロックされたパターン検出: {pattern}")
                 raise BlockedPatternError(f"禁止されたパターンが含まれています: {pattern}")
 
-    def _check_whitelist(self, command: str) -> None:
+    def _check_whitelist(self, command: str, reason: str = "") -> None:
         """
         ホワイトリストをチェック
 
         Args:
             command: チェックするコマンド
+            reason: コマンドの実行理由（承認リクエスト用）
 
         Raises:
             CommandNotAllowedError: 許可されていないコマンドの場合
@@ -80,6 +91,18 @@ class CommandValidator:
 
         for cmd in commands:
             if cmd not in self.allowed_commands:
+                # 承認コールバックがある場合は承認を試みる
+                if self.approval_callback:
+                    logger.info(f"ホワイトリスト外コマンド: {cmd} - 承認をリクエストします")
+                    approved = self.approval_callback(command, reason)
+                    if approved:
+                        logger.info(f"コマンド承認されました: {cmd}")
+                        continue  # 承認されたので次のコマンドへ
+                    else:
+                        logger.warning(f"コマンドが拒否されました: {cmd}")
+                        raise CommandNotAllowedError(f"コマンドが拒否されました: {cmd}")
+
+                # コールバックがない場合はそのままエラー
                 logger.warning(f"許可されていないコマンド: {cmd}")
                 raise CommandNotAllowedError(f"許可されていないコマンドです: {cmd}")
 

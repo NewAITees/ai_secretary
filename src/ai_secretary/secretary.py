@@ -110,11 +110,15 @@ class AISecretary:
 
         # BashExecutorの初期化
         self.bash_executor: Optional["CommandExecutor"] = bash_executor
+        self.bash_approval_callback: Optional[Any] = None  # 承認コールバック
         if self.bash_executor is None:
             try:
-                from ..bash_executor import create_executor
+                from ..bash_executor import create_executor, CommandValidator
 
                 self.bash_executor = create_executor()
+                # 承認コールバックを設定
+                if self.bash_executor and self.bash_executor.validator:
+                    self.bash_executor.validator.approval_callback = self._request_bash_approval
                 self.logger.info("BashExecutor initialized successfully")
             except Exception as e:
                 self.logger.warning(f"BashExecutor初期化失敗（機能は無効化されます）: {e}")
@@ -826,3 +830,43 @@ class AISecretary:
             if style.get("styleId") == style_id:
                 return style.get("styleName")
         return None
+
+    def _request_bash_approval(self, command: str, reason: str) -> bool:
+        """
+        BASHコマンドの承認をリクエスト（Human-in-the-Loop）
+
+        Args:
+            command: 実行するコマンド
+            reason: 実行理由
+
+        Returns:
+            承認された場合True、拒否された場合False
+        """
+        try:
+            # BashApprovalQueueをインポート
+            from ..server.app import get_bash_approval_queue
+            import asyncio
+            import threading
+
+            queue = get_bash_approval_queue()
+
+            # 承認リクエストを追加
+            request_id = queue.add_request(command, reason)
+            self.logger.info(
+                f"BASH承認リクエスト送信: {request_id} - command: {command}, reason: {reason}"
+            )
+
+            # 承認待機（最大5分）
+            approved = queue.wait_for_approval(request_id, timeout=300.0)
+
+            if approved:
+                self.logger.info(f"BASH承認されました: {command}")
+            else:
+                self.logger.warning(f"BASH拒否されました: {command}")
+
+            return approved
+
+        except Exception as e:
+            self.logger.error(f"BASH承認リクエストに失敗: {e}")
+            # エラー時はデフォルトで拒否
+            return False
