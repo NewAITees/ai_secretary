@@ -19,6 +19,25 @@ export interface ChatResponsePayload {
   raw_response?: Record<string, unknown> | null;
 }
 
+export type ChatRole = 'user' | 'assistant' | 'system';
+
+export interface ChatHistoryMessage {
+  role: ChatRole | string;
+  content: string;
+}
+
+export interface ChatSessionSummary {
+  session_id: string;
+  title: string;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  messages: ChatHistoryMessage[];
+}
+
 export type TodoStatus = 'pending' | 'in_progress' | 'done';
 
 export interface TodoItem {
@@ -230,4 +249,106 @@ export async function deleteTodo(todoId: number): Promise<void> {
       `Failed to delete todo: ${response.status}${detail ? `: ${detail}` : ''}`,
     );
   }
+}
+
+export async function getChatSessions(params?: {
+  limit?: number;
+  query?: string;
+}): Promise<ChatSessionSummary[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) {
+    searchParams.set('limit', params.limit.toString());
+  }
+  if (params?.query) {
+    searchParams.set('query', params.query);
+  }
+  const queryString = searchParams.toString();
+  const response = await fetch(`/api/chat/sessions${queryString ? `?${queryString}` : ''}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to fetch chat sessions: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatSessionSummary[];
+}
+
+export async function getChatSession(sessionId: string): Promise<ChatSessionDetail> {
+  const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to fetch chat session: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatSessionDetail;
+}
+
+export async function getCurrentChatSession(): Promise<ChatSessionDetail> {
+  const response = await fetch('/api/chat/session/current', {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to fetch current session: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatSessionDetail;
+}
+
+export async function loadChatSession(sessionId: string): Promise<ChatSessionDetail> {
+  const response = await fetch('/api/chat/load', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to load chat session: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatSessionDetail;
+}
+
+export async function resetChatSession(): Promise<ChatSessionDetail> {
+  const response = await fetch('/api/chat/reset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Failed to reset chat session: ${response.status}${detail ? `: ${detail}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatSessionDetail;
 }

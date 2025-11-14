@@ -1,37 +1,32 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
-  ChatResponsePayload,
+  ChatSessionDetail,
+  ChatSessionSummary,
   TodoItem,
   TodoStatus,
   createTodo,
   getAvailableModels,
+  getChatSessions,
+  getCurrentChatSession,
   getPendingProactiveMessages,
   getTodos,
   getProactiveChatStatus,
+  loadChatSession,
+  resetChatSession,
   updateTodo,
   deleteTodo,
   postChatMessage,
   toggleProactiveChat,
 } from './api';
-
-type Role = 'user' | 'assistant';
-
-interface MessageEntry {
-  id: string;
-  role: Role;
-  content: string;
-  details?: ChatResponsePayload;
-  timestamp: number;
-}
-
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString();
-}
-
-function createId(): string {
-  return crypto.randomUUID();
-}
+import { SessionSidebar } from './components/SessionSidebar';
+import { TodoPanel } from './components/TodoPanel';
+import {
+  convertHistoryMessages,
+  createId,
+  formatTimestamp,
+} from './utils/chat';
+import type { MessageEntry, Role } from './types/chat';
 
 const statusLabels: Record<TodoStatus, string> = {
   pending: '未着手',
@@ -43,6 +38,13 @@ const statusOptions: TodoStatus[] = ['pending', 'in_progress', 'done'];
 
 export default function App(): JSX.Element {
   const [messages, setMessages] = useState<MessageEntry[]>([]);
+  const [sessionSummaries, setSessionSummaries] = useState<ChatSessionSummary[]>([]);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionTitle, setCurrentSessionTitle] = useState('新規セッション');
+  const [currentSessionLoading, setCurrentSessionLoading] = useState(false);
   const [input, setInput] = useState('');
   const [playAudio, setPlayAudio] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -65,11 +67,53 @@ export default function App(): JSX.Element {
     dueDate: '',
     status: 'pending',
   });
+  const handleTodoFormChange = useCallback((updates: Partial<typeof todoForm>) => {
+    setTodoForm(prev => ({ ...prev, ...updates }));
+  }, [setTodoForm]);
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => a.timestamp - b.timestamp),
     [messages],
   );
+
+  const applySessionDetail = useCallback((session: ChatSessionDetail) => {
+    setCurrentSessionId(session.session_id);
+    setCurrentSessionTitle(session.title || '未命名のセッション');
+    setMessages(convertHistoryMessages(session.messages));
+  }, []);
+
+  const refreshSessions = useCallback(async (query?: string) => {
+    setSessionsLoading(true);
+    try {
+      const keyword = query?.trim() ? query.trim() : undefined;
+      const data = await getChatSessions({ limit: 20, query: keyword });
+      setSessionSummaries(data);
+      setSessionError(null);
+    } catch (err) {
+      console.error('Failed to fetch chat sessions:', err);
+      const message =
+        err instanceof Error ? err.message : 'チャット履歴の取得に失敗しました。';
+      setSessionError(message);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  const loadCurrentSession = useCallback(async () => {
+    setCurrentSessionLoading(true);
+    try {
+      const session = await getCurrentChatSession();
+      applySessionDetail(session);
+      setSessionError(null);
+    } catch (err) {
+      console.error('Failed to load current session:', err);
+      const message =
+        err instanceof Error ? err.message : '現在のセッション取得に失敗しました。';
+      setSessionError(message);
+    } finally {
+      setCurrentSessionLoading(false);
+    }
+  }, [applySessionDetail]);
 
   // モデル一覧を取得
   useEffect(() => {
@@ -86,6 +130,11 @@ export default function App(): JSX.Element {
     }
     fetchModels();
   }, []);
+
+  useEffect(() => {
+    loadCurrentSession();
+    refreshSessions();
+  }, [loadCurrentSession, refreshSessions]);
 
   // 能動会話の状態を初期化（ローカルストレージから復元）
   useEffect(() => {
@@ -125,6 +174,59 @@ export default function App(): JSX.Element {
   useEffect(() => {
     refreshTodos();
   }, [refreshTodos]);
+
+  const handleLoadSession = useCallback(
+    async (sessionId: string) => {
+      setCurrentSessionLoading(true);
+      try {
+        const session = await loadChatSession(sessionId);
+        applySessionDetail(session);
+        setSessionError(null);
+        await refreshSessions(sessionSearch);
+      } catch (err) {
+        console.error('Failed to load session:', err);
+        const message =
+          err instanceof Error ? err.message : 'セッションの読み込みに失敗しました。';
+        setSessionError(message);
+      } finally {
+        setCurrentSessionLoading(false);
+      }
+    },
+    [applySessionDetail, refreshSessions, sessionSearch],
+  );
+
+  const handleResetSession = useCallback(async () => {
+    setCurrentSessionLoading(true);
+    try {
+      const session = await resetChatSession();
+      applySessionDetail(session);
+      setSessionError(null);
+      await refreshSessions(sessionSearch);
+    } catch (err) {
+      console.error('Failed to reset session:', err);
+      const message =
+        err instanceof Error ? err.message : '新しいセッションの作成に失敗しました。';
+      setSessionError(message);
+    } finally {
+      setCurrentSessionLoading(false);
+    }
+  }, [applySessionDetail, refreshSessions, sessionSearch]);
+
+  const handleSessionSearch = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void refreshSessions(sessionSearch);
+    },
+    [refreshSessions, sessionSearch],
+  );
+
+  const handleRefreshSessionsClick = useCallback(() => {
+    void refreshSessions(sessionSearch);
+  }, [refreshSessions, sessionSearch]);
+
+  const handleCurrentSessionRefresh = useCallback(() => {
+    void loadCurrentSession();
+  }, [loadCurrentSession]);
 
   // 能動会話が有効な場合、定期的に保留メッセージをポーリング
   useEffect(() => {
@@ -195,6 +297,8 @@ export default function App(): JSX.Element {
         timestamp: Date.now(),
       };
       setMessages(prev => [...prev, assistantEntry]);
+      await loadCurrentSession();
+      await refreshSessions(sessionSearch);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : '未知のエラーが発生しました。';
@@ -247,7 +351,7 @@ export default function App(): JSX.Element {
 
   async function updateTodoWithState(
     todoId: number,
-    updater: () => Promise<void>,
+    updater: () => Promise<unknown>,
   ): Promise<void> {
     setUpdatingTodoIds(prev => {
       const next = new Set(prev);
@@ -336,181 +440,84 @@ export default function App(): JSX.Element {
       </header>
 
       <main className="app__main">
-        <section className="chat">
-          {sortedMessages.length === 0 ? (
-            <p className="chat__placeholder">最初のメッセージを入力してください。</p>
-          ) : (
-            <ul className="chat__messages">
-              {sortedMessages.map(entry => (
-                <li key={entry.id} className={`chat__message chat__message--${entry.role}`}>
-                  <div className="chat__meta">
-                    <span className="chat__role">
-                      {entry.role === 'user' ? 'あなた' : 'AI秘書'}
-                    </span>
-                    <span className="chat__timestamp">{formatTimestamp(entry.timestamp)}</span>
-                  </div>
-                  <p className="chat__content">{entry.content}</p>
-                  {entry.role === 'assistant' && entry.details && (
-                    <details className="chat__details">
-                      <summary>詳細</summary>
-                      <div>
-                        <p>音声ファイル: {entry.details.audio_path ?? 'なし'}</p>
-                        <p>音声再生: {entry.details.played_audio ? '再生済み' : '未再生'}</p>
-                        {entry.details.voice_plan && (
-                          <pre className="chat__json">
-                            {JSON.stringify(entry.details.voice_plan, null, 2)}
-                          </pre>
-                        )}
-                      </div>
-                    </details>
+        <div className="app__layout">
+        <SessionSidebar
+          sessions={sessionSummaries}
+          searchValue={sessionSearch}
+          error={sessionError}
+          sessionsLoading={sessionsLoading}
+          currentSessionId={currentSessionId}
+          currentSessionLoading={currentSessionLoading}
+          onSearchChange={setSessionSearch}
+          onSearchSubmit={handleSessionSearch}
+          onRefresh={handleRefreshSessionsClick}
+          onSelectSession={handleLoadSession}
+          onCreateNew={handleResetSession}
+          onSyncCurrent={handleCurrentSessionRefresh}
+        />
+          <div className="app__content">
+            <section className="chat">
+              <div className="chat__session-info">
+                <div>
+                  <p className="chat__session-label">選択中のセッション</p>
+                  <h2>{currentSessionTitle}</h2>
+                </div>
+                <div className="chat__session-meta">
+                  <span>ID: {currentSessionId ?? '未割り当て'}</span>
+                  {currentSessionLoading && (
+                    <span className="chat__session-status">同期中...</span>
                   )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-        <section className="todos">
-          <div className="todos__header">
-            <h2>TODOリスト</h2>
-            <button
-              type="button"
-              className="todos__refresh"
-              onClick={() => refreshTodos()}
-              disabled={todoLoading}
-            >
-              {todoLoading ? '更新中…' : '再読み込み'}
-            </button>
-          </div>
-          <form className="todo-form" onSubmit={handleTodoSubmit}>
-            <div className="todo-form__row">
-              <label>
-                タイトル
-                <input
-                  type="text"
-                  value={todoForm.title}
-                  onChange={event =>
-                    setTodoForm(prev => ({ ...prev, title: event.target.value }))
-                  }
-                  required
-                />
-              </label>
-              <label>
-                期限
-                <input
-                  type="date"
-                  value={todoForm.dueDate}
-                  onChange={event =>
-                    setTodoForm(prev => ({ ...prev, dueDate: event.target.value }))
-                  }
-                />
-              </label>
-              <label>
-                状態
-                <select
-                  value={todoForm.status}
-                  onChange={event =>
-                    setTodoForm(prev => ({
-                      ...prev,
-                      status: event.target.value as TodoStatus,
-                    }))
-                  }
-                >
-                  {statusOptions.map(status => (
-                    <option key={status} value={status}>
-                      {statusLabels[status]}
-                    </option>
+                </div>
+              </div>
+              {sortedMessages.length === 0 ? (
+                <p className="chat__placeholder">最初のメッセージを入力してください。</p>
+              ) : (
+                <ul className="chat__messages">
+                  {sortedMessages.map(entry => (
+                    <li key={entry.id} className={`chat__message chat__message--${entry.role}`}>
+                      <div className="chat__meta">
+                        <span className="chat__role">
+                          {entry.role === 'user' ? 'あなた' : 'AI秘書'}
+                        </span>
+                        <span className="chat__timestamp">{formatTimestamp(entry.timestamp)}</span>
+                      </div>
+                      <p className="chat__content">{entry.content}</p>
+                      {entry.role === 'assistant' && entry.details && (
+                        <details className="chat__details">
+                          <summary>詳細</summary>
+                          <div>
+                            <p>音声ファイル: {entry.details.audio_path ?? 'なし'}</p>
+                            <p>音声再生: {entry.details.played_audio ? '再生済み' : '未再生'}</p>
+                            {entry.details.voice_plan && (
+                              <pre className="chat__json">
+                                {JSON.stringify(entry.details.voice_plan, null, 2)}
+                              </pre>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </li>
                   ))}
-                </select>
-              </label>
-            </div>
-            <label className="todo-form__description">
-              詳細
-              <textarea
-                rows={2}
-                value={todoForm.description}
-                onChange={event =>
-                  setTodoForm(prev => ({ ...prev, description: event.target.value }))
-                }
-              />
-            </label>
-            <button type="submit" className="todo-form__submit">
-              追加
-            </button>
-          </form>
-          {todoError && <p className="todos__error">{todoError}</p>}
-          <div className="todo-list">
-            {sortedTodos.length === 0 ? (
-              <p className="todos__placeholder">
-                TODOは登録されていません。まずは上のフォームから追加してください。
-              </p>
-            ) : (
-              sortedTodos.map(todo => (
-                <article key={todo.id} className={`todo-card todo-card--${todo.status}`}>
-                  <div className="todo-card__header">
-                    <div>
-                      <span className="todo-card__status">{statusLabels[todo.status]}</span>
-                      <h3>{todo.title}</h3>
-                    </div>
-                    <button
-                      type="button"
-                      className="todo-card__delete"
-                      onClick={() => handleTodoDelete(todo.id)}
-                      disabled={isTodoUpdating(todo.id)}
-                    >
-                      削除
-                    </button>
-                  </div>
-                  <p className="todo-card__description">
-                    {todo.description || '説明は設定されていません。'}
-                  </p>
-                  <div className="todo-card__controls">
-                    <label>
-                      期限
-                      <input
-                        type="date"
-                        value={todo.due_date ?? ''}
-                        onChange={event =>
-                          handleTodoDueDateChange(todo.id, event.target.value)
-                        }
-                        disabled={isTodoUpdating(todo.id)}
-                      />
-                    </label>
-                    <label>
-                      状態
-                      <select
-                        value={todo.status}
-                        onChange={event =>
-                          handleTodoStatusChange(todo.id, event.target.value as TodoStatus)
-                        }
-                        disabled={isTodoUpdating(todo.id)}
-                      >
-                        {statusOptions.map(status => (
-                          <option key={status} value={status}>
-                            {statusLabels[status]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {todo.status !== 'done' && (
-                      <button
-                        type="button"
-                        className="todo-card__complete"
-                        onClick={() => handleTodoStatusChange(todo.id, 'done')}
-                        disabled={isTodoUpdating(todo.id)}
-                      >
-                        完了にする
-                      </button>
-                    )}
-                  </div>
-                  <footer className="todo-card__footer">
-                    <small>ID: {todo.id}</small>
-                    <small>更新: {new Date(todo.updated_at).toLocaleString()}</small>
-                  </footer>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
+                </ul>
+              )}
+            </section>
+            <TodoPanel
+              todos={sortedTodos}
+              todoForm={todoForm}
+              todoLoading={todoLoading}
+              todoError={todoError}
+              statusLabels={statusLabels}
+              statusOptions={statusOptions}
+              isTodoUpdating={isTodoUpdating}
+              onFormChange={handleTodoFormChange}
+              onSubmit={handleTodoSubmit}
+              onRefresh={() => void refreshTodos()}
+              onStatusChange={handleTodoStatusChange}
+              onDueDateChange={handleTodoDueDateChange}
+              onDelete={handleTodoDelete}
+            />
+      </div>
+    </div>
       </main>
 
       <footer className="app__footer">
