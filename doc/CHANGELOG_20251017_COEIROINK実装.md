@@ -8,7 +8,7 @@
 
 ## 実装内容
 
-### 1. COEIROINK音声合成クライアント ([src/coeiroink_client.py](../src/coeiroink_client.py))
+### 1. COEIROINK音声合成クライアント ([src/coeiroink_client/](../src/coeiroink_client))
 
 日本語音声合成ソフトウェア「COEIROINK」のAPIクライアントを実装しました。
 
@@ -157,7 +157,7 @@ test_*_ranges.py
 7 files changed, 1406 insertions(+)
 
 新規ファイル:
-- src/coeiroink_client.py              (586行)
+- src/coeiroink_client/                (クライアント実装一式)
 - tests/test_coeiroink_client.py       (430行)
 - doc/COEIROINK_PARAMETER_RESEARCH.md  (212行)
 - doc/COEIROINK_RESEARCH.md            (101行)

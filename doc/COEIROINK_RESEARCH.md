@@ -82,7 +82,7 @@ with open("output.wav", "wb") as f:
 
 ### 5. 修正内容
 
-- `src/coeiroink_client.py`の`synthesize`メソッドにて：
+- `src/coeiroink_client/client.py`の`synthesize`メソッドにて：
   - ヘッダーに`accept: audio/wav`を追加
   - `prosodyDetail`が空の場合は明示的に空配列を設定
 
