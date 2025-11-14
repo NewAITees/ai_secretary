@@ -305,6 +305,12 @@ AI秘書はBASHコマンド経由で削除スクリプトを実行する。cron�
 **P6連携:**
 ブラウザ履歴の定期取り込みもこのスケジューラーで管理する。例: 1時間ごとに`./scripts/browser/import_brave_history.sh --limit 100`を実行。
 
+**P7連携（2025-11-15追加）:**
+情報収集機能の定期実行・定期削除もこのスケジューラーで管理する。
+- **定期収集ジョブ**: 1日1回、`./scripts/info_collector/collect_rss.sh --all`でRSS収集、`./scripts/info_collector/collect_news.sh --all`でニュース収集
+- **定期削除ジョブ**: 1日1回、`InfoCollectorRepository.delete_old_info(days=30)`で30日以前のデータを削除
+- **実装**: `src/info_collector/repository.py`に`delete_old_info()`メソッド実装済み、REST APIエンドポイント`DELETE /api/info/cleanup?days=30`も利用可能
+
 ---
 
 ### [#6 / P5] ✅ 一日のサマリーを生成する機能を作る（完了）
@@ -496,24 +502,183 @@ Braveは Chromiumベースのため、Chrome/Edgeとほぼ同じスキーマ。�
 
 ---
 
-### [#10 / P7] ネット検索で最新情報を取得する
+### [#10 / P7] ✅ ネット検索・RSS・ニュース統合機能（完了）
 
 **タスクリスト:**
-- [ ] 検索エンジンAPI選定（DuckDuckGo/Google Custom Search等）
-- [ ] サンドボックス化された検索コネクタ実装
-- [ ] BASH検索スクリプト作成（`./scripts/web_search.sh "検索クエリ"`）
-- [ ] 結果要約機能実装（LLM活用）
-- [ ] キャッシュ機能実装
-- [ ] レート制限機能実装
-- [ ] 利用規約順守チェック機構
-- [ ] AI秘書からの検索インターフェース追加
-- [ ] テストコード作成
+- [x] 検索エンジンAPI選定（DuckDuckGo: `ddgs`ライブラリ採用）
+- [x] 検索・RSS・ニュース収集Collector層実装
+- [x] データスキーマ設計・Repository層実装（SQLite統合DB）
+- [x] BASH検索スクリプト作成（`./scripts/info_collector/search_web.sh "検索クエリ"`）
+- [x] BASH RSS収集スクリプト作成（`./scripts/info_collector/collect_rss.sh --all`）
+- [x] BASH ニュース収集スクリプト作成（`./scripts/info_collector/collect_news.sh --all`）
+- [x] 結果要約機能実装（Ollama LLM統合）
+- [x] 外部設定ファイル実装（`config/info_collector/*.txt`）
+- [x] REST APIエンドポイント実装（`/api/info/*`）
+- [x] テストコード作成（10テスト全て通過）
+- [ ] キャッシュ機能実装（必要に応じて今後拡張）
+- [ ] レート制限機能実装（必要に応じて今後拡張）
+- [ ] CLI入力を安全にPython側へ渡すよう `scripts/info_collector/*.sh` をエスケープ対応
+- [ ] `/api/info/*` ルートの同期I/Oを `run_in_threadpool` 等で非同期化し、400系HTTPエラーを返す
+- [ ] コードから参照している `plan/P7_INFO_COLLECTOR_PLAN.md` の実体を追加するか参照を修正
+
+**実装内容 (2025-11-15完了):**
+
+#### 作成ファイル
+- `src/info_collector/models.py` - データモデル（CollectedInfo, SearchResult, RSSEntry, NewsArticle, InfoSummary）
+- `src/info_collector/repository.py` - InfoCollectorRepository（CRUD操作）
+- `src/info_collector/config.py` - InfoCollectorConfig（外部設定ローダー）
+- `src/info_collector/summarizer.py` - InfoSummarizer（Ollama統合）
+- `src/info_collector/collectors/base.py` - BaseCollector抽象クラス
+- `src/info_collector/collectors/search_collector.py` - SearchCollector（DuckDuckGo）
+- `src/info_collector/collectors/rss_collector.py` - RSSCollector（feedparser）
+- `src/info_collector/collectors/news_collector.py` - NewsCollector（BeautifulSoup4）
+- `config/info_collector/rss_feeds.txt` - RSS URL設定
+- `config/info_collector/news_sites.txt` - ニュースサイトURL設定
+- `config/info_collector/search_queries.txt` - 定期検索クエリ設定
+- `scripts/info_collector/search_web.sh` - Web検索スクリプト
+- `scripts/info_collector/collect_rss.sh` - RSS収集スクリプト
+- `scripts/info_collector/collect_news.sh` - ニュース収集スクリプト
+- `scripts/info_collector/generate_summary.sh` - 要約生成スクリプト
+- `src/server/routes/info_collector.py` - REST APIルート
+- `tests/test_info_collector.py` - テストコード（10テスト）
+
+#### スキーマ構成
+```sql
+CREATE TABLE collected_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,        -- 'search', 'rss', 'news'
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    content TEXT,
+    snippet TEXT,
+    published_at TEXT,
+    fetched_at TEXT NOT NULL,
+    source_name TEXT,
+    metadata_json TEXT,
+    UNIQUE(source_type, url)          -- 重複防止
+);
+
+CREATE TABLE info_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    summary_type TEXT NOT NULL,       -- 'daily', 'topic', 'search'
+    title TEXT NOT NULL,
+    summary_text TEXT NOT NULL,
+    source_info_ids TEXT,
+    created_at TEXT NOT NULL,
+    query TEXT
+);
+```
+
+#### 主要機能
+- **検索**: DuckDuckGo検索（`ddgs`ライブラリ）、結果をDB保存
+- **RSS**: feedparserで複数RSSフィード一括取得、公開日時パース対応
+- **ニュース**: BeautifulSoup4で汎用的なニュースサイトスクレイピング
+- **AI要約**: Ollama統合で収集情報を自然言語要約（LLMオン/オフ切替可能）
+- **外部設定**: テキストファイルベースで簡単編集（コメント・空行スキップ）
+- **統合DB**: `data/ai_secretary.db`の`collected_info`テーブルに統合保存
+- **重複排除**: `UNIQUE(source_type, url)`制約 + `IntegrityError`処理
+- **定期削除対応**: `delete_old_info(days=30)`メソッド実装済み
+
+#### 使い方
+
+**1. BASHスクリプト経由**
+```bash
+# Web検索
+./scripts/info_collector/search_web.sh "Python 3.13" 10
+
+# RSS一括収集（設定ファイルから）
+./scripts/info_collector/collect_rss.sh --all --limit 20
+
+# ニュース一括収集
+./scripts/info_collector/collect_news.sh --all --limit 10
+
+# 要約生成（LLMあり）
+./scripts/info_collector/generate_summary.sh --source-type search --limit 20
+
+# 要約生成（LLMなし）
+./scripts/info_collector/generate_summary.sh --query "AI技術" --no-llm
+```
+
+**2. Python API経由**
+```python
+from src.info_collector import (
+    SearchCollector, RSSCollector, NewsCollector,
+    InfoCollectorRepository, InfoCollectorConfig
+)
+from src.info_collector.summarizer import InfoSummarizer
+
+# 検索
+collector = SearchCollector()
+results = collector.search("Python", limit=10)
+
+# RSS収集
+config = InfoCollectorConfig()
+rss_collector = RSSCollector()
+feed_urls = config.load_rss_feeds()
+entries = rss_collector.collect_multiple(feed_urls, max_entries_per_feed=20)
+
+# DB保存
+repo = InfoCollectorRepository()
+for entry in entries:
+    repo.add_info(entry)
+
+# 要約生成
+summarizer = InfoSummarizer()
+summary = summarizer.summarize_recent(source_type="rss", limit=20, use_llm=True)
+print(summary["summary"])
+```
+
+**3. REST API経由**
+```bash
+# 検索（POST）
+curl -X POST http://localhost:8000/api/info/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Python", "limit": 10}'
+
+# RSS収集（POST）
+curl -X POST http://localhost:8000/api/info/rss/collect \
+  -H "Content-Type: application/json" \
+  -d '{"collect_all": true, "limit": 20}'
+
+# 情報一覧取得（GET）
+curl http://localhost:8000/api/info/list?source_type=search&limit=50
+
+# 要約生成（POST）
+curl -X POST http://localhost:8000/api/info/summary \
+  -H "Content-Type: application/json" \
+  -d '{"source_type": "rss", "limit": 20, "use_llm": true}'
+
+# 古いデータ削除（DELETE）
+curl -X DELETE http://localhost:8000/api/info/cleanup?days=30
+```
+
+#### REST APIエンドポイント
+- `POST /api/info/search` - Web検索実行・保存
+- `POST /api/info/rss/collect` - RSS収集
+- `POST /api/info/news/collect` - ニュース収集
+- `GET /api/info/list` - 収集済み情報一覧
+- `POST /api/info/summary` - 情報要約生成
+- `DELETE /api/info/cleanup` - 古い情報削除
+
+#### 技術スタック
+- **検索**: `ddgs` (DuckDuckGo公式Python実装)
+- **RSS**: `feedparser`
+- **スクレイピング**: `beautifulsoup4` + `requests`
+- **AI要約**: `OllamaClient`（既存実装）
+- **データ保存**: SQLite（`data/ai_secretary.db`）
+
+#### テスト結果
+10テスト全て通過（Pydantic v2警告は除く）
+
+**次のステップ（今後の拡張）:**
+- [ ] playwright-mcp統合（JavaScript必須サイト対応）
+- [ ] サイト固有スクレイピングロジック追加（NHK、朝日新聞等）
+- [ ] キャッシュ機能実装（同一クエリのレート制限）
+- [ ] 定期実行スケジューラー統合（P4で実装予定）
+- [ ] フロントエンドUI実装（情報閲覧・検索・要約表示）
 
 **外部システムアクセス方針:**
-AI秘書はBASHコマンド経由で検索を実行する。結果はJSON形式で標準出力に返す。
-
-**調査メモ:**
-既存コードにHTTP検索コネクタは確認できず、新規で安全な外部アクセスレイヤーを設計する必要がある。
+AI秘書はBASHコマンド経由で検索・収集を実行する。結果はJSON形式で標準出力に返す。
 
 ---
 

@@ -1,0 +1,9 @@
+# Search Queries for periodic collection (1 query per line, # for comments)
+# 定期検索クエリ例
+
+# 技術トピック
+# Python 3.13 最新情報
+# AI 技術ニュース
+
+# 一般トピック
+# 最新ニュース 日本

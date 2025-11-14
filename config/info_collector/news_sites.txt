@@ -1,0 +1,11 @@
+# News Site URLs (1 URL per line, # for comments)
+# ニュースサイト例（playwright-mcpでスクレイピング）
+
+# NHKニュース
+https://www3.nhk.or.jp/news/
+
+# 朝日新聞デジタル
+# https://www.asahi.com/
+
+# 日経電子版
+# https://www.nikkei.com/

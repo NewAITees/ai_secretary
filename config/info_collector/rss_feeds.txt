@@ -1,0 +1,15 @@
+# RSS Feed URLs (1 URL per line, # for comments)
+# ニュースフィード例
+
+# Yahoo!ニュース - トピックス
+https://news.yahoo.co.jp/rss/topics/top-picks.xml
+
+# ITmedia - 最新記事
+https://www.itmedia.co.jp/rss/2.0/news_bursts.xml
+
+# GIGAZINE
+https://gigazine.net/news/rss_2.0/
+
+# 技術系ニュース
+# https://www.publickey1.jp/atom.xml
+# https://zenn.dev/feed

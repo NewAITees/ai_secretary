@@ -10,6 +10,7 @@ from .routes import (
     register_chat_routes,
     register_proactive_routes,
     register_todo_routes,
+    register_info_routes,
 )
 
 def create_app() -> FastAPI:
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     register_proactive_routes(app)
     register_todo_routes(app)
     register_bash_routes(app)
+    register_info_routes(app)
 
     return app
 

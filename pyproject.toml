@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "youtube-transcript-api>=1.2.3",
     "pyyaml>=6.0",
+    "feedparser>=6.0.12",
+    "beautifulsoup4>=4.14.2",
+    "ddgs>=9.9.0",
 ]
 
 [project.optional-dependencies]
@@ -47,3 +50,9 @@ python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]
