@@ -36,6 +36,12 @@ target-version = ['py313']
 line-length = 100
 target-version = "py313"
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (requiring external services)",
+    "slow: marks tests as slow running tests",
+]
+
 [tool.mypy]
 python_version = "3.13"
 warn_return_any = true
