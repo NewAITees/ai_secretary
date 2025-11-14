@@ -16,7 +16,7 @@
 
 - [x] **P1** - #2 TODOリスト操作（既存DBとAPIに小規模テーブル追加で着手可能）
 - [x] **P2** - #3 「今日やったこと」記録（lifelog-systemのログ設計を流用できる）
-- [ ] **P3** - #7 チャット履歴保存（`src/ai_secretary/secretary.py`はメモリ保持のみで拡張余地大）
+- [x] **P3** - #7 チャット履歴保存（Pythonベースの自動保存機能として実装完了）
 - [ ] **P4** - #8 定期削除処理（jobスケジューラ追加とポリシー定義で完結）
 - [ ] **P5** - #6 日次サマリー生成（lifelog-systemの`cli_viewer`が参考になる）
 - [ ] **P6** - #1 ウェブ履歴のDB格納（lifelog-systemに将来拡張案ありだが未実装）
@@ -178,25 +178,110 @@ print(result.parsed_json)
 - [ ] 日次ログコンテキストの会話への注入
 - [ ] LLM統合テストの作成
 
-### [#7 / P3] チャット履歴を保存する
+### [#7 / P3] ✅ チャット履歴を保存する（Pythonベース・完了）
 
 **タスクリスト:**
-- [ ] 会話ログ保存ポリシーの定義
-- [ ] データスキーマ設計（会話ID、ユーザー操作、AIアクション、メタデータ）
-- [ ] SQLiteテーブル作成
-- [ ] Repository層実装
-- [ ] `AISecretary`への永続化機能追加（`self.conversation_history`の保存）
-- [ ] REST APIエンドポイント実装（履歴取得・検索）
-- [ ] BASH経由での履歴操作コマンド作成（保存・検索）
-- [ ] 暗号化機能の検討・実装（必要に応じて）
-- [ ] フロントエンドUI実装（履歴閲覧）
-- [ ] テストコード作成
+- [x] 会話ログ保存ポリシーの定義（セッション単位、JSON形式）
+- [x] データスキーマ設計（session_id, title, messages_json, timestamps）
+- [x] SQLiteテーブル作成（chat_historyテーブル）
+- [x] Repository層実装（ChatHistoryRepository）
+- [x] `AISecretary`への永続化機能追加（自動保存・セッション読み込み）
+- [ ] REST APIエンドポイント実装（履歴取得・検索）※次フェーズ
+- [ ] ~~BASH経由での履歴操作コマンド作成~~（不要：Pythonコードで直接実装）
+- [ ] 暗号化機能の検討・実装（必要に応じて）※後回し
+- [ ] フロントエンドUI実装（履歴閲覧）※次フェーズ
+- [x] テストコード作成（24テスト全て通過）
 
-**外部システムアクセス方針:**
-AI秘書はBASHコマンド経由で履歴保存・検索を実行する（例: `./scripts/save_chat.sh` または `./scripts/search_chat.sh "キーワード"`）。
+**実装内容 (2025-11-14完了):**
 
-**調査メモ:**
-`src/ai_secretary/secretary.py`では`self.conversation_history`がメモリ保持のまま消える。DB/ファイル永続化の追加が未着手。
+#### 作成ファイル
+- `src/chat_history/__init__.py` - モジュール初期化
+- `src/chat_history/models.py` - ChatSessionデータモデル
+- `src/chat_history/repository.py` - ChatHistoryRepository（CRUD操作）
+- `tests/test_chat_history.py` - リポジトリ単体テスト（14テスト）
+- `tests/test_chat_history_integration.py` - AISecretary統合テスト（10テスト）
+
+#### 更新ファイル
+- `src/ai_secretary/secretary.py`:
+  - ChatHistoryRepository統合
+  - `session_id`/`session_title`管理
+  - `chat()`メソッドで自動保存
+  - `load_session()`メソッドで過去セッション読み込み
+  - `reset_conversation()`で新セッション生成
+
+#### スキーマ構成
+```sql
+CREATE TABLE chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL UNIQUE,     -- UUIDv4
+    title TEXT NOT NULL,                 -- 最初のメッセージから生成（30文字）
+    messages_json TEXT NOT NULL,         -- JSON配列で会話全体を保存
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_chat_session ON chat_history(session_id);
+CREATE INDEX idx_chat_updated ON chat_history(updated_at DESC);
+```
+
+#### 主要機能
+- **自動保存**: `chat()`呼び出しごとに履歴を自動保存
+- **セッション管理**: UUID形式のセッションIDで一意に識別
+- **タイトル自動生成**: 最初のメッセージから自動生成（最大30文字）
+- **会話継続**: `load_session()`で過去の会話を読み込んで継続可能
+- **検索機能**: タイトル・メッセージ内容でセッション検索（Repository層）
+
+#### 使い方
+
+**Python API経由（AISecretary）**
+```python
+from src.ai_secretary import AISecretary
+
+secretary = AISecretary()
+
+# 新規会話（自動保存）
+secretary.chat("こんにちは")
+session_id = secretary.session_id  # 現在のセッションID
+
+# 会話リセット（新しいセッション）
+secretary.reset_conversation()
+
+# 過去のセッション再開
+secretary.load_session(session_id)
+secretary.chat("続きの質問")  # 会話が継続される
+```
+
+**Repository直接操作**
+```python
+from src.chat_history import ChatHistoryRepository
+
+repo = ChatHistoryRepository()
+
+# セッション一覧取得（新しい順）
+sessions = repo.list_sessions(limit=20)
+
+# セッション検索
+results = repo.search_sessions("Python")
+
+# セッション取得
+session = repo.get_session(session_id)
+messages = session.messages  # パース済みメッセージリスト
+```
+
+**設計方針の変更:**
+当初計画ではBASHスクリプト経由での保存・検索を想定していたが、チャット履歴は会話ごとにリアルタイム保存する必要があるため、**Pythonコードで直接実装**する方針に変更。
+- BASH経由での呼び出しは外部ツール向けに不要（内部統合のため）
+- AISecretaryクラスに直接統合し、会話フローに組み込む
+- REST APIは次フェーズで実装予定
+
+**詳細設計:**
+`plan/P3_CHAT_HISTORY_PLAN.md`参照（Pythonベース版）
+
+**次のステップ（TODO）:**
+- [ ] REST APIエンドポイント実装（`GET /api/chat/sessions`, `GET /api/chat/sessions/{id}`, `POST /api/chat/load`）
+- [ ] フロントエンドUI実装（履歴一覧・検索・再開機能）
+- [ ] セッションメタデータ拡張（モデル名、推論時間など）
+- [ ] 暗号化機能検討（機密情報を含む会話の保護）
 
 ### [#8 / P4] 履歴や音声などのファイルを定期削除する
 
