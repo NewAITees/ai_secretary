@@ -24,6 +24,7 @@ from .exceptions import (
 from .config_loader import ConfigLoader
 from .validator import CommandValidator
 from .executor import CommandExecutor
+from .script_executor import BashScriptExecutor, BashResult
 
 
 __all__ = [
@@ -37,6 +38,8 @@ __all__ = [
     "ConfigLoader",
     "CommandValidator",
     "CommandExecutor",
+    "BashScriptExecutor",
+    "BashResult",
     "create_executor",
 ]
 

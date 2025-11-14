@@ -12,12 +12,12 @@ UNSET = object()
 
 
 class TodoRepository:
-    """SQLiteベースのTODO管理。"""
+    """SQLiteベースのTODO管理。統合スキーマ対応版。"""
 
     def __init__(self, db_path: Optional[Path] = None):
         root = Path(__file__).resolve().parents[2]
-        default_path = root / "data" / "todo.db"
-        env_path = os.getenv("AI_SECRETARY_TODO_DB_PATH")
+        default_path = root / "data" / "ai_secretary.db"  # 統合DBパスに変更
+        env_path = os.getenv("AI_SECRETARY_DB_PATH")  # 環境変数名も変更
         if db_path:
             self.db_path = Path(db_path)
         elif env_path:
@@ -33,23 +33,30 @@ class TodoRepository:
         return conn
 
     def _initialize(self) -> None:
+        """統合スキーマでの初期化（todo_itemsテーブル使用）"""
         with self._connect() as conn:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS todos (
+                CREATE TABLE IF NOT EXISTS todo_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     description TEXT DEFAULT '',
-                    status TEXT NOT NULL,
-                    due_date TEXT,
+                    status TEXT NOT NULL CHECK (status IN ('todo','doing','done','archived')),
+                    priority INTEGER NOT NULL DEFAULT 3,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    due_date TEXT,
+                    tags_json TEXT DEFAULT '[]'
                 )
                 """
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_todos_status_due ON todos (status, due_date)"
+                "CREATE INDEX IF NOT EXISTS idx_todo_status ON todo_items(status)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_todo_priority ON todo_items(priority)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_todo_due ON todo_items(due_date)")
             conn.commit()
 
     @staticmethod
@@ -66,14 +73,17 @@ class TodoRepository:
             due_date=row["due_date"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            priority=row["priority"],
+            tags_json=row["tags_json"],
         )
 
     def list(self) -> list[TodoItem]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM todos
+                SELECT * FROM todo_items
                 ORDER BY
+                    priority ASC,
                     CASE status
                         WHEN 'done' THEN 1
                         ELSE 0
@@ -89,20 +99,22 @@ class TodoRepository:
         title: str,
         description: str = "",
         due_date: Optional[str] = None,
-        status: TodoStatus = TodoStatus.PENDING,
+        status: TodoStatus = TodoStatus.TODO,
+        priority: int = 3,
+        tags_json: str = "[]",
     ) -> TodoItem:
         now = self._now()
         with self._connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO todos (title, description, status, due_date, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO todo_items (title, description, status, due_date, created_at, updated_at, priority, tags_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (title, description, status.value, due_date, now, now),
+                (title, description, status.value, due_date, now, now, priority, tags_json),
             )
             conn.commit()
             todo_id = cursor.lastrowid
-            row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+            row = conn.execute("SELECT * FROM todo_items WHERE id = ?", (todo_id,)).fetchone()
         return self._row_to_item(row)
 
     def update(
@@ -138,25 +150,26 @@ class TodoRepository:
         params.append(todo_id)
 
         with self._connect() as conn:
-            conn.execute(f"UPDATE todos SET {', '.join(fields)} WHERE id = ?", params)
+            conn.execute(f"UPDATE todo_items SET {', '.join(fields)} WHERE id = ?", params)
             conn.commit()
-            row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+            row = conn.execute("SELECT * FROM todo_items WHERE id = ?", (todo_id,)).fetchone()
 
         return self._row_to_item(row) if row else None
 
     def delete(self, todo_id: int) -> bool:
         with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+            cursor = conn.execute("DELETE FROM todo_items WHERE id = ?", (todo_id,))
             conn.commit()
             return cursor.rowcount > 0
 
     def get(self, todo_id: int) -> Optional[TodoItem]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+            row = conn.execute("SELECT * FROM todo_items WHERE id = ?", (todo_id,)).fetchone()
         return self._row_to_item(row) if row else None
 
     def bulk_create(self, items: Iterable[dict]) -> list[TodoItem]:
         """テスト/初期データ投入用のヘルパー。"""
+        from typing import List
         created: List[TodoItem] = []
         for item in items:
             created.append(
@@ -164,7 +177,9 @@ class TodoRepository:
                     title=item.get("title", ""),
                     description=item.get("description", ""),
                     due_date=item.get("due_date"),
-                    status=TodoStatus(item.get("status", TodoStatus.PENDING.value)),
+                    status=TodoStatus(item.get("status", TodoStatus.TODO.value)),
+                    priority=item.get("priority", 3),
+                    tags_json=item.get("tags_json", "[]"),
                 )
             )
         return created
