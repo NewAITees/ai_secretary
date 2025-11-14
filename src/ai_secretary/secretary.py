@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -973,3 +973,43 @@ class AISecretary:
             self.logger.error(f"BASH承認リクエストに失敗: {e}")
             # エラー時はデフォルトで拒否
             return False
+
+    def get_daily_summary(
+        self, date: Optional[str] = None, use_llm: bool = True
+    ) -> Dict[str, Any]:
+        """
+        日次サマリーを取得
+
+        Args:
+            date: 対象日付（YYYY-MM-DD形式、Noneの場合は今日）
+            use_llm: LLMを使用して自然言語サマリーを生成するか
+
+        Returns:
+            サマリー辞書
+            - date: 対象日付
+            - summary: 自然言語サマリー（use_llm=Trueの場合）
+            - raw_data: 構造化データ
+            - statistics: 統計情報
+
+        Example:
+            >>> secretary = AISecretary()
+            >>> summary = secretary.get_daily_summary()
+            >>> print(summary["summary"])
+        """
+        try:
+            from ..journal import JournalSummarizer
+
+            summarizer = JournalSummarizer(
+                bash_executor=None,  # デフォルトを使用
+                ollama_client=self.ollama_client,  # 既存のクライアントを共有
+            )
+
+            return summarizer.generate_daily_summary(date=date, use_llm=use_llm)
+
+        except Exception as e:
+            self.logger.error(f"日次サマリー取得に失敗: {e}")
+            return {
+                "date": date or datetime.now().strftime("%Y-%m-%d"),
+                "error": "サマリー取得エラー",
+                "details": str(e),
+            }

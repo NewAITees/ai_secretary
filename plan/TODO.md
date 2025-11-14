@@ -18,7 +18,7 @@
 - [x] **P2** - #3 「今日やったこと」記録（lifelog-systemのログ設計を流用できる）
 - [x] **P3** - #7 チャット履歴保存（Pythonベースの自動保存機能として実装完了）
 - [ ] **P4** - #8 定期削除処理（jobスケジューラ追加とポリシー定義で完結）
-- [ ] **P5** - #6 日次サマリー生成（lifelog-systemの`cli_viewer`が参考になる）
+- [x] **P5** - #6 日次サマリー生成（LLMベースの自然言語サマリー生成機能として実装完了）
 - [ ] **P6** - #1 ウェブ履歴のDB格納（lifelog-systemに将来拡張案ありだが未実装）
 - [ ] **P7** - #10 ネット検索連携（外部I/Oが必要でサンドボックス配慮が必要）
 - [ ] **P8** - #4 AI秘書の機能アクセス設計（権限情報整理とAPI化で規模中）
@@ -303,23 +303,123 @@ AI秘書はBASHコマンド経由で削除スクリプトを実行する。cron�
 
 ---
 
-### [#6 / P5] 一日のサマリーを生成する機能を作る
+### [#6 / P5] ✅ 一日のサマリーを生成する機能を作る（完了）
 
 **タスクリスト:**
-- [ ] サマリー生成対象データの選定（日次ログ、TODO、チャット履歴等）
-- [ ] データ集約パイプライン設計
-- [ ] LLMを使った自然言語サマリー生成ロジック実装
-- [ ] KPI算出機能実装
-- [ ] BASHスクリプト作成（`./scripts/generate_daily_summary.sh --date 2025-11-11`）
-- [ ] サマリー保存先の決定・実装
-- [ ] 配信チャネル実装（UI/メール/チャット）
-- [ ] テストコード作成
+- [x] サマリー生成対象データの選定（日次ログ、TODO、チャット履歴等）
+- [x] データ集約パイプライン設計
+- [x] LLMを使った自然言語サマリー生成ロジック実装
+- [x] KPI算出機能実装
+- [x] BASHスクリプト作成（`./scripts/generate_daily_summary.sh --date 2025-11-11`）※P2で完了
+- [x] テストコード作成
 
-**外部システムアクセス方針:**
-AI秘書はBASHコマンド経由でサマリー生成を実行する。出力は標準出力またはファイルで受け取る。
+**実装内容 (2025-11-14完了):**
 
-**調査メモ:**
-`lifelog-system/src/cli_viewer.py`には`show_daily_summary`がありSQLビューも揃っているため、結果をAI秘書が取得するAPI化が容易。
+#### 作成ファイル
+- `src/journal/__init__.py` - journalモジュール初期化
+- `src/journal/summarizer.py` - JournalSummarizer（LLMベースのサマリー生成器）
+- `tests/test_journal_summarizer.py` - JournalSummarizer単体テスト（7テスト通過）
+- `tests/test_ai_secretary_summary.py` - AISecretary統合テスト（4テスト通過）
+
+#### 更新ファイル
+- `src/ai_secretary/secretary.py`:
+  - `get_daily_summary(date, use_llm)` メソッド追加
+  - JournalSummarizerとの統合
+  - datetimeインポート追加
+
+#### 主要機能
+
+**1. JournalSummarizer**
+- BASH経由でSQLiteから構造化データ取得（`scripts/journal/generate_summary.sh`利用）
+- OllamaClientでLLM推論による自然言語サマリー生成
+- LLM失敗時のフォールバックサマリー生成（テンプレートベース）
+- TODO進捗との横断結合データ活用
+
+**2. 生成されるサマリー内容**
+- 活動総数と概要
+- 主な活動内容（時系列順）
+- TODO進捗状況（リンクされている場合）
+- 所要時間などのメタ情報
+- ハイライト（LLM生成時）
+- 次のアクションへの提案（LLM生成時）
+
+#### 使い方
+
+**AISecretary経由での使用**
+```python
+from src.ai_secretary.secretary import AISecretary
+
+secretary = AISecretary()
+
+# 今日のサマリー（LLM使用）
+summary = secretary.get_daily_summary()
+print(summary["summary"])
+
+# 特定日のサマリー（LLM使用）
+summary = secretary.get_daily_summary(date="2025-11-14", use_llm=True)
+
+# 構造化データのみ（LLM不使用）
+data = secretary.get_daily_summary(use_llm=False)
+print(data["raw_data"])
+```
+
+**JournalSummarizer直接使用**
+```python
+from src.journal import JournalSummarizer
+
+summarizer = JournalSummarizer()
+
+# サマリー生成
+result = summarizer.generate_daily_summary(date="2025-11-14", use_llm=True)
+print(result["summary"])
+```
+
+#### サマリーレスポンス形式
+
+```json
+{
+    "date": "2025-11-14",
+    "summary": "【自然言語サマリー】\n本日はPython学習を2時間実施しました...",
+    "raw_data": {
+        "date": "2025-11-14",
+        "activities": [...],
+        "progress": {"entry_count": 2, "linked_todo_updates": 1},
+        "todo_summary": [...]
+    },
+    "statistics": {
+        "entry_count": 2,
+        "linked_todo_updates": 1
+    }
+}
+```
+
+#### 設計上の特徴
+
+1. **P2との統合**
+   - P2で実装された`scripts/journal/generate_summary.sh`を再利用
+   - 統合DB（`data/ai_secretary.db`）からTODO⇄実績の横断結合データを取得
+   - ビュー（`v_daily_progress`, `v_todo_latest_journal`）を活用
+
+2. **LLM連携**
+   - OllamaClientでJSON形式の構造化レスポンスを取得
+   - プロンプトエンジニアリングで高品質なサマリー生成
+   - LLM失敗時のフォールバック機構（テンプレートベース）
+
+3. **テスト戦略**
+   - BashExecutor/OllamaClientのモック化
+   - エッジケース（空データ、エラー、LLM失敗）のカバー
+   - AISecretary統合テストで実運用フローを検証
+
+#### テスト結果
+- `tests/test_journal_summarizer.py`: 7テスト全て通過
+- `tests/test_ai_secretary_summary.py`: 4テスト全て通過
+
+**次のステップ（今後の拡張）:**
+- [ ] REST APIエンドポイント実装（`GET /api/summary/{date}`）
+- [ ] フロントエンドUI実装（サマリー表示ダッシュボード）
+- [ ] サマリー保存・履歴管理機能
+- [ ] 週次/月次サマリー生成機能
+- [ ] メール/チャット配信機能
 
 ---
 
