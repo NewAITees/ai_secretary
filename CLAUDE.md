@@ -107,7 +107,7 @@ curl http://localhost:11434/api/tags
 - Two main methods: `chat()` for conversations, `generate()` for single-shot completions
 - Supports streaming
 
-**COEIROINKClient** ([src/coeiroink_client.py](src/coeiroink_client.py))
+**COEIROINKClient** ([src/coeiroink_client/__init__.py](src/coeiroink_client/__init__.py))
 - Full-featured Japanese TTS client
 - Speaker/style management with UUID-based selection
 - Detailed voice parameter control: speed, volume, pitch, intonation
