@@ -11,6 +11,7 @@ AI秘書のメインモジュール
 import json
 import logging
 import time
+import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -29,6 +30,11 @@ try:
 except Exception:  # pragma: no cover - BashExecutorを利用できない環境向け
     CommandExecutor = None  # type: ignore[assignment]
 
+try:
+    from ..chat_history import ChatHistoryRepository  # type: ignore
+except Exception:  # pragma: no cover - ChatHistoryを利用できない環境向け
+    ChatHistoryRepository = None  # type: ignore[assignment]
+
 
 class AISecretary:
     """AI秘書のメインクラス"""
@@ -40,6 +46,7 @@ class AISecretary:
         coeiroink_client: Optional[COEIROINKClient] = None,
         audio_player: Optional["AudioPlayer"] = None,
         bash_executor: Optional["CommandExecutor"] = None,
+        chat_history_repo: Optional["ChatHistoryRepository"] = None,
     ):
         """
         初期化
@@ -50,6 +57,7 @@ class AISecretary:
             coeiroink_client: 依存性注入用のCOEIROINKクライアント
             audio_player: 依存性注入用のAudioPlayer
             bash_executor: 依存性注入用のBashExecutor
+            chat_history_repo: 依存性注入用のChatHistoryRepository
         """
         self.config = config or Config.from_yaml()
         self.logger = logging.getLogger(__name__)
@@ -125,6 +133,20 @@ class AISecretary:
         if bash_instruction and self.bash_executor:
             self.conversation_history.append({"role": "system", "content": bash_instruction})
 
+        # ChatHistoryRepositoryの初期化
+        self.chat_history_repo: Optional["ChatHistoryRepository"] = chat_history_repo
+        if self.chat_history_repo is None and ChatHistoryRepository is not None:
+            try:
+                self.chat_history_repo = ChatHistoryRepository()
+                self.logger.info("ChatHistoryRepository initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"ChatHistoryRepository初期化失敗（機能は無効化されます）: {e}")
+                self.chat_history_repo = None
+
+        # セッション管理
+        self.session_id = str(uuid.uuid4())  # 新規セッションID
+        self.session_title: Optional[str] = None  # セッションタイトル（最初のメッセージから生成）
+
     def chat(
         self,
         user_message: str,
@@ -176,6 +198,9 @@ class AISecretary:
                 {"role": "assistant", "content": response_str}
             )
 
+            # チャット履歴を自動保存
+            self._save_chat_history(user_message)
+
             voice_plan = None
             audio_path = None
             # COEIROINKクライアントが有効な場合のみ音声合成を試みる
@@ -208,13 +233,16 @@ class AISecretary:
                 self.ollama_client.model = original_model
 
     def reset_conversation(self):
-        """会話履歴をリセット"""
+        """会話履歴をリセット（新規セッションとして扱う）"""
         self.conversation_history.clear()
         if self.config.system_prompt:
             self.conversation_history.append(
                 {"role": "system", "content": self.config.system_prompt}
             )
-        self.logger.info("会話履歴をリセットしました")
+        # 新しいセッションIDを生成
+        self.session_id = str(uuid.uuid4())
+        self.session_title = None
+        self.logger.info(f"会話履歴をリセットしました (new session: {self.session_id})")
 
     def get_available_models(self) -> List[str]:
         """利用可能なモデルのリストを取得"""
@@ -230,9 +258,83 @@ class AISecretary:
         """秘書システムを停止"""
         self.logger.info("AI秘書システムを停止します")
 
+    def load_session(self, session_id: str) -> bool:
+        """
+        過去のチャットセッションを読み込んで会話を再開
+
+        Args:
+            session_id: 読み込むセッションのID
+
+        Returns:
+            読み込み成功時True、失敗時False
+        """
+        if not self.chat_history_repo:
+            self.logger.warning("ChatHistoryRepository未初期化のためセッション読み込みをスキップ")
+            return False
+
+        try:
+            session = self.chat_history_repo.get_session(session_id)
+            if not session:
+                self.logger.warning(f"セッションが見つかりません: {session_id}")
+                return False
+
+            # セッション情報を復元
+            self.session_id = session.session_id
+            self.session_title = session.title
+            self.conversation_history = session.messages
+
+            self.logger.info(f"セッションを読み込みました: {session.title} ({session_id})")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"セッション読み込みに失敗: {e}")
+            return False
+
     # =========================================================
     # 内部ユーティリティ
     # =========================================================
+
+    def _save_chat_history(self, user_message: str) -> None:
+        """
+        チャット履歴を自動保存
+
+        Args:
+            user_message: ユーザーの最新メッセージ（タイトル生成用）
+        """
+        if not self.chat_history_repo:
+            return
+
+        # タイトル未設定なら最初のユーザーメッセージから生成
+        if self.session_title is None:
+            self.session_title = self._generate_title(user_message)
+
+        try:
+            self.chat_history_repo.save_or_update(
+                session_id=self.session_id,
+                title=self.session_title,
+                messages=self.conversation_history
+            )
+            self.logger.debug(f"チャット履歴を保存しました: {self.session_title}")
+        except Exception as e:
+            self.logger.error(f"チャット履歴の保存に失敗: {e}")
+
+    @staticmethod
+    def _generate_title(user_message: str) -> str:
+        """
+        ユーザーメッセージからセッションタイトルを生成
+
+        Args:
+            user_message: ユーザーメッセージ
+
+        Returns:
+            タイトル（最大30文字）
+        """
+        # 改行や余分な空白を削除
+        title = " ".join(user_message.split())
+        # 最大30文字に制限
+        if len(title) > 30:
+            title = title[:30] + "..."
+        return title
 
     def _build_voice_instruction(self) -> str:
         """COEIROINK利用のためのプロンプトを生成"""
