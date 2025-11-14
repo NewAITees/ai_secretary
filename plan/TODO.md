@@ -17,9 +17,9 @@
 - [x] **P1** - #2 TODOリスト操作（既存DBとAPIに小規模テーブル追加で着手可能）
 - [x] **P2** - #3 「今日やったこと」記録（lifelog-systemのログ設計を流用できる）
 - [x] **P3** - #7 チャット履歴保存（Pythonベースの自動保存機能として実装完了）
-- [ ] **P4** - #8 定期削除処理（jobスケジューラ追加とポリシー定義で完結）
+- [ ] **P4** - #8 定期削除処理（jobスケジューラ追加とポリシー定義で完結）+ ブラウザ履歴定期取り込み
 - [x] **P5** - #6 日次サマリー生成（LLMベースの自然言語サマリー生成機能として実装完了）
-- [ ] **P6** - #1 ウェブ履歴のDB格納（lifelog-systemに将来拡張案ありだが未実装）
+- [x] **P6** - #1 ウェブ履歴のDB格納（Phase 1完了：Brave履歴インポート・重複排除・テスト通過）
 - [ ] **P7** - #10 ネット検索連携（外部I/Oが必要でサンドボックス配慮が必要）
 - [ ] **P8** - #4 AI秘書の機能アクセス設計（権限情報整理とAPI化で規模中）
 - [ ] **P9** - #5 履歴を元にした提案（推論ロジックと評価ループ構築が必要）
@@ -290,6 +290,7 @@ messages = session.messages  # パース済みメッセージリスト
 - [ ] 削除対象ファイルの判定ロジック実装
 - [ ] BASH削除スクリプト作成（`./scripts/cleanup_old_files.sh --days 30`）
 - [ ] スケジューラー機能実装（cronまたはPythonベース）
+- [ ] **ブラウザ履歴の定期取り込みジョブ実装**（P6から移動）
 - [ ] 削除前アーカイブ機能の検討・実装
 - [ ] 監査ログ機能実装
 - [ ] ユーザー確認フローの検討
@@ -300,6 +301,9 @@ AI秘書はBASHコマンド経由で削除スクリプトを実行する。cron�
 
 **調査メモ:**
 `lifelog-system`にデーモンとスケジューラが既に存在するため、同等のジョブ登録方式を流用できる可能性あり。
+
+**P6連携:**
+ブラウザ履歴の定期取り込みもこのスケジューラーで管理する。例: 1時間ごとに`./scripts/browser/import_brave_history.sh --limit 100`を実行。
 
 ---
 
@@ -423,25 +427,72 @@ print(result["summary"])
 
 ---
 
-### [#1 / P6] ウェブサイトの閲覧履歴をDBに格納する
+### [#1 / P6] ウェブサイトの閲覧履歴をDBに格納する（Phase 1完了）
 
-**タスクリスト:**
-- [ ] 収集対象ブラウザの選定（Chrome/Firefox等）
-- [ ] ブラウザ履歴取得方法の調査・実装
-- [ ] データスキーマ設計（時刻・URL・タイトル・メタ情報）
-- [ ] SQLiteテーブル作成
-- [ ] Repository層実装
-- [ ] BASH取得スクリプト作成（`./scripts/import_browser_history.sh --browser chrome`）
-- [ ] 定期取り込みジョブ実装
-- [ ] 重複排除ロジック実装
-- [ ] REST APIエンドポイント実装（履歴参照）
-- [ ] テストコード作成
+**タスクリスト（Phase 1: 基本実装）:**
+- [x] 収集対象ブラウザの選定（Brave）
+- [x] ブラウザ履歴取得方法の調査・実装（BraveHistoryImporter）
+- [x] データスキーマ設計（BrowserHistoryEntry）
+- [x] SQLiteテーブル作成（browser_history, browser_import_log）
+- [x] Repository層実装（BrowserHistoryRepository）
+- [x] BASH取得スクリプト作成（`./scripts/browser/import_brave_history.sh`）
+- [x] 重複排除ロジック実装（ユニークインデックス + IntegrityError処理）
+- [x] テストコード作成（11テスト全て通過）
+- [ ] 定期取り込みジョブ実装（→P4に移動）
+- [ ] REST APIエンドポイント実装（→Phase 2で実装予定）
+
+**実装内容 (2025-11-14完了):**
+
+#### 作成ファイル
+- `src/browser_history/models.py` - BrowserHistoryEntryデータモデル
+- `src/browser_history/repository.py` - BrowserHistoryRepository（CRUD操作）
+- `src/browser_history/importer.py` - BraveHistoryImporter（Chromiumタイムスタンプ変換対応）
+- `src/browser_history/__init__.py` - モジュール初期化
+- `scripts/browser/import_brave_history.sh` - インポートスクリプト
+- `tests/test_browser_history.py` - 単体テスト（11テスト）
+
+#### 主要機能
+- **自動検出**: WSL2/Linux/macOS環境でBrave履歴ファイルを自動検出
+- **Chromiumタイムスタンプ変換**: 1601年エポックからPythonのdatetimeへ変換
+- **ファイルロック回避**: 一時コピー方式でブラウザ起動中も読み取り可能
+- **重複排除**: `source_browser` + `brave_visit_id`のユニークインデックス
+- **統合DB**: `data/ai_secretary.db`の`browser_history`テーブルに格納
+- **検索機能**: URL/タイトル検索、日付範囲フィルタ
+- **インポートログ**: `browser_import_log`テーブルで履歴管理
+
+#### 使い方
+
+**BASHスクリプト経由:**
+```bash
+# 最新100件をインポート
+./scripts/browser/import_brave_history.sh --limit 100 --json
+
+# プロファイルパス指定
+./scripts/browser/import_brave_history.sh --profile-path /path/to/profile
+```
+
+**Python API経由:**
+```python
+from src.browser_history import BraveHistoryImporter
+
+importer = BraveHistoryImporter()
+count = importer.import_history(limit=100)
+print(f"{count}件インポートしました")
+```
+
+**詳細設計:**
+`plan/P6_BROWSER_HISTORY_PLAN.md`参照
+
+**次のステップ（Phase 2）:**
+- [ ] AISecretaryへの統合（`get_browser_history()`メソッド）
+- [ ] REST APIエンドポイント実装（`GET /api/browser-history`, `POST /api/browser-history/import`）
+- [ ] フロントエンドUI実装（履歴閲覧・検索）
 
 **外部システムアクセス方針:**
 AI秘書はBASHコマンド経由でブラウザ履歴取得を実行する。
 
 **調査メモ:**
-`lifelog-system/README.md`の「今後の拡張」にブラウザ履歴統合が記載されているがコードは未実装。新規Collectorが必要。
+Braveは Chromiumベースのため、Chrome/Edgeとほぼ同じスキーマ。他ブラウザ対応も同様の手法で可能。
 
 ---
 
