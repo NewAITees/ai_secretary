@@ -2,12 +2,13 @@ import os
 
 from fastapi.testclient import TestClient
 
-from src.server.app import create_app, get_todo_repository
+from src.server.app import create_app
+from src.server.dependencies import get_todo_repository
 
 
 def create_test_client(tmp_path, monkeypatch) -> TestClient:
     db_path = tmp_path / "api_todos.db"
-    monkeypatch.setenv("AI_SECRETARY_TODO_DB_PATH", str(db_path))
+    monkeypatch.setenv("AI_SECRETARY_DB_PATH", str(db_path))
     get_todo_repository.cache_clear()
     app = create_app()
     return TestClient(app)
@@ -24,7 +25,7 @@ def test_todo_api_crud_flow(tmp_path, monkeypatch):
         "title": "Prepare slides",
         "description": "For Friday meeting",
         "due_date": "2025-12-10",
-        "status": "pending",
+        "status": "todo",
     }
     resp = client.post("/api/todos", json=create_payload)
     assert resp.status_code == 200

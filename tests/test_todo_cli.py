@@ -46,7 +46,7 @@ def test_cli_add_and_list(tmp_path):
             "--due-date",
             "2025-12-15",
             "--status",
-            "in_progress",
+            "doing",
             "--format",
             "json",
         ],
@@ -55,7 +55,7 @@ def test_cli_add_and_list(tmp_path):
     assert result.returncode == 0
     added = json.loads(result.stdout)
     assert added["title"] == "会議準備"
-    assert added["status"] == "in_progress"
+    assert added["status"] == "doing"
     assert added["due_date"] == "2025-12-15"
     todo_id = added["id"]
 

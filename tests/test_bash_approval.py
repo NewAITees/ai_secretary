@@ -16,7 +16,7 @@ import pytest
 
 from src.bash_executor.validator import CommandValidator
 from src.bash_executor.exceptions import CommandNotAllowedError
-from src.server.app import BashApprovalQueue
+from src.server.approval_queue import BashApprovalQueue
 
 
 class TestCommandValidatorApproval:
@@ -186,7 +186,7 @@ class TestBashApprovalAPI:
 
     def test_approve_request_workflow(self, client):
         """承認リクエスト→承認のワークフロー"""
-        from src.server.app import get_bash_approval_queue
+        from src.server.dependencies import get_bash_approval_queue
 
         queue = get_bash_approval_queue()
         request_id = queue.add_request("echo hello", "test command")
@@ -244,7 +244,7 @@ class TestAISecretaryApprovalIntegration:
 
     def test_request_bash_approval_approved(self, secretary):
         """承認リクエストが承認された場合Trueを返す"""
-        with patch("src.server.app.get_bash_approval_queue") as mock_get_queue:
+        with patch("src.server.dependencies.get_bash_approval_queue") as mock_get_queue:
             mock_queue = Mock()
             mock_queue.add_request.return_value = "test-request-id"
             mock_queue.wait_for_approval.return_value = True
@@ -260,7 +260,7 @@ class TestAISecretaryApprovalIntegration:
 
     def test_request_bash_approval_rejected(self, secretary):
         """承認リクエストが拒否された場合Falseを返す"""
-        with patch("src.server.app.get_bash_approval_queue") as mock_get_queue:
+        with patch("src.server.dependencies.get_bash_approval_queue") as mock_get_queue:
             mock_queue = Mock()
             mock_queue.add_request.return_value = "test-request-id"
             mock_queue.wait_for_approval.return_value = False
@@ -273,7 +273,7 @@ class TestAISecretaryApprovalIntegration:
     def test_request_bash_approval_error_returns_false(self, secretary):
         """承認リクエスト中にエラーが発生した場合Falseを返す"""
         with patch(
-            "src.server.app.get_bash_approval_queue",
+            "src.server.dependencies.get_bash_approval_queue",
             side_effect=Exception("Connection error"),
         ):
             result = secretary._request_bash_approval("ls", "list files")

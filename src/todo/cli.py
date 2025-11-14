@@ -4,8 +4,8 @@ TODO管理CLI - AI秘書がsubprocess経由で呼び出すコマンドライン�
 
 Usage:
     python -m src.todo.cli list [--format json|text]
-    python -m src.todo.cli add --title "タイトル" [--description "詳細"] [--due-date YYYY-MM-DD] [--status pending|in_progress|done]
-    python -m src.todo.cli update --id ID [--title "新タイトル"] [--description "新詳細"] [--due-date YYYY-MM-DD] [--status pending|in_progress|done] [--clear-due-date]
+    python -m src.todo.cli add --title "タイトル" [--description "詳細"] [--due-date YYYY-MM-DD] [--status todo|doing|done|archived]
+    python -m src.todo.cli update --id ID [--title "新タイトル"] [--description "新詳細"] [--due-date YYYY-MM-DD] [--status todo|doing|done|archived] [--clear-due-date]
     python -m src.todo.cli complete --id ID
     python -m src.todo.cli delete --id ID
     python -m src.todo.cli get --id ID [--format json|text]
@@ -74,7 +74,7 @@ def cmd_add(
         todo_status = TodoStatus(status)
     except ValueError:
         print(
-            f"Error: 不正なstatus値: {status}。pending|in_progress|doneのいずれかを指定してください。",
+            f"Error: 不正なstatus値: {status}。todo|doing|done|archivedのいずれかを指定してください。",
             file=sys.stderr,
         )
         return 1
@@ -111,7 +111,7 @@ def cmd_update(
         todo_status = TodoStatus(status) if status else None
     except ValueError:
         print(
-            f"Error: 不正なstatus値: {status}。pending|in_progress|doneのいずれかを指定してください。",
+            f"Error: 不正なstatus値: {status}。todo|doing|done|archivedのいずれかを指定してください。",
             file=sys.stderr,
         )
         return 1
@@ -228,9 +228,9 @@ def main() -> int:
     parser_add.add_argument("--due-date", help="期限日（YYYY-MM-DD形式）")
     parser_add.add_argument(
         "--status",
-        choices=["pending", "in_progress", "done"],
-        default="pending",
-        help="初期ステータス（デフォルト: pending）",
+        choices=["todo", "doing", "done", "archived"],
+        default="todo",
+        help="初期ステータス（デフォルト: todo）",
     )
     parser_add.add_argument(
         "--format",
@@ -248,7 +248,7 @@ def main() -> int:
     parser_update.add_argument("--clear-due-date", action="store_true", help="期限日をクリア")
     parser_update.add_argument(
         "--status",
-        choices=["pending", "in_progress", "done"],
+        choices=["todo", "doing", "done", "archived"],
         help="新しいステータス",
     )
     parser_update.add_argument(
