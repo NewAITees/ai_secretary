@@ -630,11 +630,12 @@ curl http://localhost:8000/api/suggestions?limit=5
 
 ### Phase 3: P9最小実装（1週間）
 
-- [ ] 共通取得スクリプト実装（`scripts/history/get_recent_history.sh`）
-- [ ] 簡易提案テンプレート実装（`config/prompts/suggestion_*.txt`）
-- [ ] 重複防止ハッシュ実装（`suggestions` テーブル）
-- [ ] P8経由で呼び出し（`generate_suggestions.sh` をRegistry登録）
-- [ ] `/api/suggestions` エンドポイント実装
+- [x] 共通取得スクリプト実装（`scripts/history/get_recent_history.sh`）
+- [x] 簡易提案テンプレート実装（`config/prompts/suggestion_*.txt`）
+- [x] 重複防止ハッシュ実装（`suggestions` テーブル）
+- [x] P8経由で呼び出し（`generate_suggestions.sh` をRegistry登録）
+- [x] `/api/suggestions` エンドポイント実装
+- [x] テストスクリプト作成（`scripts/history/test_suggestions.sh`）
 
 ### Phase 4: 拡張（2週間）
 
@@ -671,3 +672,11 @@ curl http://localhost:8000/api/suggestions?limit=5
   - `config/tools/*.yaml` ツール定義（search_web, get_todos, cleanup_logs）
   - `config/tools/capabilities.json` 権限マップ
   - テストスクリプト（`scripts/tools/test_tool_executor.sh`）作成
+- 2025-11-17: Phase 3（P9最小実装）完了
+  - `scripts/history/get_recent_history.sh` 実装（統合履歴取得）
+  - `scripts/history/generate_suggestions.sh` 実装（LLMによる提案生成）
+  - `scripts/history/init_suggestions_db.sh` 実装（suggestionsテーブル作成）
+  - `/api/suggestions` エンドポイント実装（GET, POST feedback, POST dismiss）
+  - `config/tools/generate_suggestions.yaml` ツール定義
+  - `config/prompts/suggestion_*.txt` プロンプトテンプレート（既存）
+  - テストスクリプト（`scripts/history/test_suggestions.sh`）作成

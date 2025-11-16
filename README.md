@@ -229,6 +229,66 @@ curl -X POST http://localhost:8000/api/tools/execute \
 
 詳細は [plan/P4_P8_P9_design.md](plan/P4_P8_P9_design.md) を参照。
 
+## 履歴ベース提案（P9）
+
+ユーザ履歴を横断して有用な提案を生成する機能を実装しました。
+
+### 統合履歴取得
+
+```bash
+# 全データソースから履歴取得
+./scripts/history/get_recent_history.sh --type all --limit 50 --days 7
+
+# 特定のデータソースのみ取得
+./scripts/history/get_recent_history.sh --type todo --limit 10 --days 30
+```
+
+### 提案生成
+
+```bash
+# LLMによる提案生成（Ollama必須）
+./scripts/history/generate_suggestions.sh --limit 10 --days 7
+
+# suggestionsテーブル初期化
+./scripts/history/init_suggestions_db.sh
+```
+
+### Suggestions API
+
+```bash
+# 提案一覧取得
+curl http://localhost:8000/api/suggestions?limit=10
+
+# フィードバック記録（👍: 1, 👎: -1）
+curl -X POST http://localhost:8000/api/suggestions/1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"feedback": 1}'
+
+# 提案を非表示
+curl -X POST http://localhost:8000/api/suggestions/1/dismiss
+```
+
+### Tool Executor経由での提案生成
+
+```bash
+curl -X POST http://localhost:8000/api/tools/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "generate_suggestions",
+    "args": {"limit": 5, "days": 7},
+    "role": "assistant"
+  }'
+```
+
+### テスト
+
+```bash
+# サーバーが起動している状態で実行
+./scripts/history/test_suggestions.sh
+```
+
+詳細は [plan/P4_P8_P9_design.md](plan/P4_P8_P9_design.md) を参照。
+
 ## テスト
 
 ```bash

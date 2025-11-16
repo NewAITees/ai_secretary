@@ -6,6 +6,7 @@ from .proactive import register_proactive_routes
 from .todo import register_todo_routes
 from .info_collector import register_info_routes
 from .tools import register_tool_routes
+from .suggestions import register_suggestions_routes
 
 __all__ = [
     "register_bash_routes",
@@ -14,4 +15,5 @@ __all__ = [
     "register_todo_routes",
     "register_info_routes",
     "register_tool_routes",
+    "register_suggestions_routes",
 ]

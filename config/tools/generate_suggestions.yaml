@@ -1,0 +1,21 @@
+name: generate_suggestions
+command: scripts/history/generate_suggestions.sh
+description: ユーザ履歴を分析して有用な提案を生成する
+args_schema:
+  limit:
+    type: int
+    required: false
+    default: 10
+    description: 生成する提案の最大数
+  days:
+    type: int
+    required: false
+    default: 7
+    description: 分析する履歴の日数
+output_format: json
+safety_tags:
+  - expensive
+timeout: 120
+rate_limit:
+  max_calls_per_hour: 10
+  max_calls_per_day: 50
