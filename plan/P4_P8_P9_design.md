@@ -620,12 +620,13 @@ curl http://localhost:8000/api/suggestions?limit=5
 
 ### Phase 2: P8最小実装（1週間）
 
-- [ ] Tool Registry 実装（`config/tools/*.yaml`）
-- [ ] Capability Map 実装（`config/tools/capabilities.json`）
-- [ ] Tool Executor 実装（`src/ai_secretary/tool_executor.py`）
-- [ ] 監査ログ実装（`data/tool_audit.db`）
-- [ ] `search_web` と `cleanup_logs` を登録
-- [ ] `/api/tools/execute` エンドポイント実装
+- [x] Tool Registry 実装（`config/tools/*.yaml`）
+- [x] Capability Map 実装（`config/tools/capabilities.json`）
+- [x] Tool Executor 実装（`src/ai_secretary/tool_executor.py`）
+- [x] 監査ログ実装（`data/tool_audit.db`）
+- [x] `search_web` と `cleanup_logs` を登録
+- [x] `/api/tools/execute` エンドポイント実装
+- [x] テストスクリプト作成（`scripts/tools/test_tool_executor.sh`）
 
 ### Phase 3: P9最小実装（1週間）
 
@@ -663,3 +664,10 @@ curl http://localhost:8000/api/suggestions?limit=5
   - 監査ログDB（`cleanup_jobs`テーブル）作成
   - 補助スクリプト（`run_job.sh`, `list_jobs.sh`, `init_cleanup_db.sh`）実装
   - ドライラン動作確認済み
+- 2025-11-17: Phase 2（P8最小実装）完了
+  - `src/ai_secretary/tool_executor.py` 実装（ToolRegistry, CapabilityManager, ToolExecutor, ToolAuditLogger, RateLimiter）
+  - 監査ログDB（`tool_audit`テーブル）作成
+  - `/api/tools/execute`, `/api/tools/list` エンドポイント実装
+  - `config/tools/*.yaml` ツール定義（search_web, get_todos, cleanup_logs）
+  - `config/tools/capabilities.json` 権限マップ
+  - テストスクリプト（`scripts/tools/test_tool_executor.sh`）作成

@@ -185,6 +185,50 @@ ai_secretary/
 
 詳細は [plan/P4_P8_P9_design.md](plan/P4_P8_P9_design.md) を参照。
 
+## AI秘書の機能アクセス（P8）
+
+LLMが安全にツールを呼び出せる権限付きAPIレイヤーを実装しました。
+
+### Tool Executor API
+
+```bash
+# ツール一覧取得
+curl http://localhost:8000/api/tools/list
+
+# ツール実行（例: get_todos）
+curl -X POST http://localhost:8000/api/tools/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": "get_todos",
+    "args": {"status": "all", "limit": 5},
+    "role": "assistant"
+  }'
+```
+
+### 監査ログDB初期化
+
+```bash
+./scripts/tools/init_tool_audit_db.sh
+```
+
+### テストスクリプト
+
+```bash
+# サーバーが起動している状態で実行
+./scripts/tools/test_tool_executor.sh
+```
+
+### ツール定義とロール
+
+- **assistant**: `search_web`, `get_todos` などユーザー対話ツールのみ実行可能
+- **system**: `cleanup_*`, `import_*` など定期ジョブツールのみ実行可能
+- **admin**: 全ツール実行可能
+
+ツール定義: `config/tools/*.yaml`
+権限マップ: `config/tools/capabilities.json`
+
+詳細は [plan/P4_P8_P9_design.md](plan/P4_P8_P9_design.md) を参照。
+
 ## テスト
 
 ```bash

@@ -11,6 +11,7 @@ from .routes import (
     register_proactive_routes,
     register_todo_routes,
     register_info_routes,
+    register_tool_routes,
 )
 
 def create_app() -> FastAPI:
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     register_todo_routes(app)
     register_bash_routes(app)
     register_info_routes(app)
+    register_tool_routes(app)
 
     return app
 
