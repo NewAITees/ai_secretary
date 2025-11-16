@@ -31,68 +31,71 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$COLLECT_ALL" == "true" ]]; then
-    # 設定ファイルから全ニュースサイトを収集
-    uv run python -c "
+# 環境変数経由で安全にパラメータを渡す
+export INFO_COLLECT_ALL="$COLLECT_ALL"
+export INFO_SITE_URL="$SITE_URL"
+export INFO_LIMIT="$LIMIT"
+
+uv run python - <<'PYTHON'
+import os
+import json
 from src.info_collector import NewsCollector, InfoCollectorRepository, InfoCollectorConfig
-import json
 
-config = InfoCollectorConfig()
+collect_all = os.environ.get("INFO_COLLECT_ALL", "false") == "true"
+site_url = os.environ.get("INFO_SITE_URL", "")
+limit = int(os.environ.get("INFO_LIMIT", "10"))
+
 collector = NewsCollector()
 repo = InfoCollectorRepository()
 
-site_urls = config.load_news_sites()
-if not site_urls:
-    print(json.dumps({'error': 'ニュースサイトURLが設定されていません'}, ensure_ascii=False))
-    exit(1)
+if collect_all:
+    # 設定ファイルから全ニュースサイトを収集
+    config = InfoCollectorConfig()
+    site_urls = config.load_news_sites()
+    if not site_urls:
+        print(json.dumps({"error": "ニュースサイトURLが設定されていません"}, ensure_ascii=False))
+        exit(1)
 
-all_articles = collector.collect_multiple(site_urls, max_articles_per_site=$LIMIT)
+    all_articles = collector.collect_multiple(site_urls, max_articles_per_site=limit)
 
-saved_count = 0
-for article in all_articles:
-    if repo.add_info(article):
-        saved_count += 1
+    saved_count = 0
+    for article in all_articles:
+        if repo.add_info(article):
+            saved_count += 1
 
-output = {
-    'total_sites': len(site_urls),
-    'total_articles': len(all_articles),
-    'saved_count': saved_count,
-    'sites': site_urls
-}
-print(json.dumps(output, ensure_ascii=False, indent=2))
-"
-elif [[ -n "$SITE_URL" ]]; then
+    output = {
+        "total_sites": len(site_urls),
+        "total_articles": len(all_articles),
+        "saved_count": saved_count,
+        "sites": site_urls
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+elif site_url:
     # 単一ニュースサイトを収集
-    uv run python -c "
-from src.info_collector import NewsCollector, InfoCollectorRepository
-import json
+    articles = collector.collect(site_url, max_articles=limit)
 
-collector = NewsCollector()
-repo = InfoCollectorRepository()
+    saved_count = 0
+    for article in articles:
+        if repo.add_info(article):
+            saved_count += 1
 
-articles = collector.collect('$SITE_URL', max_articles=$LIMIT)
+    output = {
+        "site_url": site_url,
+        "total_articles": len(articles),
+        "saved_count": saved_count,
+        "articles": [
+            {
+                "title": a.title,
+                "url": a.url,
+                "snippet": a.snippet[:100] if a.snippet else None
+            }
+            for a in articles[:5]
+        ]
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
-saved_count = 0
-for article in articles:
-    if repo.add_info(article):
-        saved_count += 1
-
-output = {
-    'site_url': '$SITE_URL',
-    'total_articles': len(articles),
-    'saved_count': saved_count,
-    'articles': [
-        {
-            'title': a.title,
-            'url': a.url,
-            'snippet': a.snippet[:100] if a.snippet else None
-        }
-        for a in articles[:5]
-    ]
-}
-print(json.dumps(output, ensure_ascii=False, indent=2))
-"
-else
-    echo "使い方: $0 [--site-url URL | --all] [--limit N]" >&2
-    exit 1
-fi
+else:
+    print(json.dumps({"error": "--site-url または --all を指定してください"}, ensure_ascii=False))
+    exit(1)
+PYTHON

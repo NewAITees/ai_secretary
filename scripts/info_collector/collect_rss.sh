@@ -31,68 +31,71 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$COLLECT_ALL" == "true" ]]; then
-    # 設定ファイルから全RSSを収集
-    uv run python -c "
+# 環境変数経由で安全にパラメータを渡す
+export INFO_COLLECT_ALL="$COLLECT_ALL"
+export INFO_FEED_URL="$FEED_URL"
+export INFO_LIMIT="$LIMIT"
+
+uv run python - <<'PYTHON'
+import os
+import json
 from src.info_collector import RSSCollector, InfoCollectorRepository, InfoCollectorConfig
-import json
 
-config = InfoCollectorConfig()
+collect_all = os.environ.get("INFO_COLLECT_ALL", "false") == "true"
+feed_url = os.environ.get("INFO_FEED_URL", "")
+limit = int(os.environ.get("INFO_LIMIT", "20"))
+
 collector = RSSCollector()
 repo = InfoCollectorRepository()
 
-feed_urls = config.load_rss_feeds()
-if not feed_urls:
-    print(json.dumps({'error': 'RSS URLが設定されていません'}, ensure_ascii=False))
-    exit(1)
+if collect_all:
+    # 設定ファイルから全RSSを収集
+    config = InfoCollectorConfig()
+    feed_urls = config.load_rss_feeds()
+    if not feed_urls:
+        print(json.dumps({"error": "RSS URLが設定されていません"}, ensure_ascii=False))
+        exit(1)
 
-all_entries = collector.collect_multiple(feed_urls, max_entries_per_feed=$LIMIT)
+    all_entries = collector.collect_multiple(feed_urls, max_entries_per_feed=limit)
 
-saved_count = 0
-for entry in all_entries:
-    if repo.add_info(entry):
-        saved_count += 1
+    saved_count = 0
+    for entry in all_entries:
+        if repo.add_info(entry):
+            saved_count += 1
 
-output = {
-    'total_feeds': len(feed_urls),
-    'total_entries': len(all_entries),
-    'saved_count': saved_count,
-    'feeds': feed_urls
-}
-print(json.dumps(output, ensure_ascii=False, indent=2))
-"
-elif [[ -n "$FEED_URL" ]]; then
+    output = {
+        "total_feeds": len(feed_urls),
+        "total_entries": len(all_entries),
+        "saved_count": saved_count,
+        "feeds": feed_urls
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+elif feed_url:
     # 単一RSSを収集
-    uv run python -c "
-from src.info_collector import RSSCollector, InfoCollectorRepository
-import json
+    entries = collector.collect(feed_url, max_entries=limit)
 
-collector = RSSCollector()
-repo = InfoCollectorRepository()
+    saved_count = 0
+    for entry in entries:
+        if repo.add_info(entry):
+            saved_count += 1
 
-entries = collector.collect('$FEED_URL', max_entries=$LIMIT)
+    output = {
+        "feed_url": feed_url,
+        "total_entries": len(entries),
+        "saved_count": saved_count,
+        "entries": [
+            {
+                "title": e.title,
+                "url": e.url,
+                "published_at": e.published_at.isoformat() if e.published_at else None
+            }
+            for e in entries[:5]
+        ]
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
-saved_count = 0
-for entry in entries:
-    if repo.add_info(entry):
-        saved_count += 1
-
-output = {
-    'feed_url': '$FEED_URL',
-    'total_entries': len(entries),
-    'saved_count': saved_count,
-    'entries': [
-        {
-            'title': e.title,
-            'url': e.url,
-            'published_at': e.published_at.isoformat() if e.published_at else None
-        }
-        for e in entries[:5]
-    ]
-}
-print(json.dumps(output, ensure_ascii=False, indent=2))
-"
-else
-    echo "使い方: $0 [--feed-url URL | --all] [--limit N]" >&2
-    exit 1
-fi
+else:
+    print(json.dumps({"error": "--feed-url または --all を指定してください"}, ensure_ascii=False))
+    exit(1)
+PYTHON

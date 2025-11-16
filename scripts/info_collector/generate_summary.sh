@@ -36,34 +36,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -n "$QUERY" ]]; then
+# 環境変数経由で安全にパラメータを渡す
+export INFO_QUERY="$QUERY"
+export INFO_SOURCE_TYPE="$SOURCE_TYPE"
+export INFO_USE_LLM="$USE_LLM"
+export INFO_LIMIT="$LIMIT"
+
+uv run python - <<'PYTHON'
+import os
+import json
+from src.info_collector.summarizer import InfoSummarizer
+
+query = os.environ.get("INFO_QUERY", "")
+source_type = os.environ.get("INFO_SOURCE_TYPE", "")
+use_llm = os.environ.get("INFO_USE_LLM", "True") == "True"
+limit = int(os.environ.get("INFO_LIMIT", "20"))
+
+summarizer = InfoSummarizer()
+
+if query:
     # クエリ検索による要約
-    uv run python -c "
-from src.info_collector.summarizer import InfoSummarizer
-import json
-
-summarizer = InfoSummarizer()
-result = summarizer.summarize_by_query('$QUERY', limit=$LIMIT, use_llm=$USE_LLM)
-print(json.dumps(result, ensure_ascii=False, indent=2))
-"
-elif [[ -n "$SOURCE_TYPE" ]]; then
+    result = summarizer.summarize_by_query(query, limit=limit, use_llm=use_llm)
+elif source_type:
     # ソースタイプ別要約
-    uv run python -c "
-from src.info_collector.summarizer import InfoSummarizer
-import json
-
-summarizer = InfoSummarizer()
-result = summarizer.summarize_recent(source_type='$SOURCE_TYPE', limit=$LIMIT, use_llm=$USE_LLM)
-print(json.dumps(result, ensure_ascii=False, indent=2))
-"
-else
+    result = summarizer.summarize_recent(source_type=source_type, limit=limit, use_llm=use_llm)
+else:
     # 全体要約
-    uv run python -c "
-from src.info_collector.summarizer import InfoSummarizer
-import json
+    result = summarizer.summarize_recent(limit=limit, use_llm=use_llm)
 
-summarizer = InfoSummarizer()
-result = summarizer.summarize_recent(limit=$LIMIT, use_llm=$USE_LLM)
 print(json.dumps(result, ensure_ascii=False, indent=2))
-"
-fi
+PYTHON

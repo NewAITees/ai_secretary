@@ -14,15 +14,27 @@ fi
 
 cd "$(dirname "$0")/../.." || exit 1
 
-uv run python -c "
-from src.info_collector import SearchCollector, InfoCollectorRepository
+# 環境変数経由で安全にパラメータを渡す
+export INFO_QUERY="$QUERY"
+export INFO_LIMIT="$LIMIT"
+
+uv run python - <<'PYTHON'
+import os
 import json
+from src.info_collector import SearchCollector, InfoCollectorRepository
+
+query = os.environ.get("INFO_QUERY", "")
+limit = int(os.environ.get("INFO_LIMIT", "10"))
+
+if not query:
+    print(json.dumps({"error": "検索クエリが指定されていません"}, ensure_ascii=False))
+    exit(1)
 
 collector = SearchCollector()
 repo = InfoCollectorRepository()
 
 # 検索実行
-results = collector.search('$QUERY', limit=$LIMIT)
+results = collector.search(query, limit=limit)
 
 # DB保存
 saved_count = 0
@@ -32,17 +44,17 @@ for result in results:
 
 # 結果出力
 output = {
-    'query': '$QUERY',
-    'total_results': len(results),
-    'saved_count': saved_count,
-    'results': [
+    "query": query,
+    "total_results": len(results),
+    "saved_count": saved_count,
+    "results": [
         {
-            'title': r.title,
-            'url': r.url,
-            'snippet': r.snippet
+            "title": r.title,
+            "url": r.url,
+            "snippet": r.snippet
         }
         for r in results
     ]
 }
 print(json.dumps(output, ensure_ascii=False, indent=2))
-"
+PYTHON
