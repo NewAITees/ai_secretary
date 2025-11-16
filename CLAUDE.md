@@ -47,6 +47,16 @@ uv run python scripts/dev_server.py
 # Backend: http://localhost:8000
 # Frontend: http://localhost:5173
 
+# CUI mode (command-line interface, no audio)
+# For testing or direct interaction via terminal
+uv run python scripts/cui_chat.py --no-audio
+
+# CUI mode with audio
+uv run python scripts/cui_chat.py
+
+# CUI mode with custom model
+uv run python scripts/cui_chat.py --model llama3.1:8b --no-audio
+
 # Production build
 npm run build --prefix frontend
 uv run python -m uvicorn src.server.app:app --host 0.0.0.0 --port 8000
@@ -63,6 +73,9 @@ uv run pytest tests/test_ai_secretary_voice.py -v
 
 # Run with coverage
 uv run pytest tests/ -v --cov=src
+
+# Test CUI chat interface (automated)
+./scripts/test_cui_chat.sh
 ```
 
 ### Code Quality
