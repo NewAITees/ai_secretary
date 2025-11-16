@@ -1,0 +1,26 @@
+name: cleanup_logs
+command: scripts/cleanup/cleanup_files.sh
+description: ログファイルを削除・アーカイブする（管理者専用）
+args_schema:
+  glob:
+    type: string
+    required: true
+    pattern: "^[a-zA-Z0-9_/*.-]+$"
+    description: ファイルグロブパターン（例: logs/*.log）
+  days:
+    type: int
+    required: true
+    description: 保持日数
+  archive:
+    type: boolean
+    required: false
+    default: true
+    description: アーカイブ後削除するか
+output_format: json
+safety_tags:
+  - data_delete
+  - expensive
+timeout: 300
+rate_limit:
+  max_calls_per_hour: 10
+  max_calls_per_day: 50

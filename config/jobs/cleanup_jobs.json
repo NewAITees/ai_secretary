@@ -1,0 +1,49 @@
+{
+  "jobs": [
+    {
+      "name": "cleanup_logs",
+      "command": "scripts/cleanup/cleanup_files.sh",
+      "args": ["--glob", "logs/*.log", "--days", "14", "--archive"],
+      "schedule": "0 2 * * *",
+      "enabled": true,
+      "dry_run": false,
+      "description": "ログファイルを14日保持後、アーカイブ削除"
+    },
+    {
+      "name": "cleanup_audio",
+      "command": "scripts/cleanup/cleanup_files.sh",
+      "args": ["--glob", "outputs/audio/*.wav", "--days", "7"],
+      "schedule": "0 3 * * *",
+      "enabled": true,
+      "dry_run": false,
+      "description": "音声ファイルを7日保持後、削除"
+    },
+    {
+      "name": "cleanup_collected_info",
+      "command": "scripts/cleanup/cleanup_db.sh",
+      "args": ["--table", "collected_info", "--date-column", "fetched_at", "--days", "45", "--archive"],
+      "schedule": "0 4 * * *",
+      "enabled": true,
+      "dry_run": false,
+      "description": "収集情報を45日保持後、アーカイブ削除"
+    },
+    {
+      "name": "import_brave_history",
+      "command": "scripts/browser/import_brave_history.sh",
+      "args": ["--limit", "200"],
+      "schedule": "0 * * * *",
+      "enabled": true,
+      "dry_run": false,
+      "description": "Brave履歴を1時間ごとに200件取り込み"
+    },
+    {
+      "name": "cleanup_browser_raw",
+      "command": "scripts/cleanup/cleanup_browser_raw.sh",
+      "args": ["--days", "3"],
+      "schedule": "0 5 * * *",
+      "enabled": true,
+      "dry_run": false,
+      "description": "取り込み済みブラウザ原本を3日後に削除"
+    }
+  ]
+}

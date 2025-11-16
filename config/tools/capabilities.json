@@ -1,0 +1,36 @@
+{
+  "roles": {
+    "assistant": {
+      "description": "AI秘書（ユーザー対話）",
+      "allowed_tools": [
+        "search_web",
+        "get_todos",
+        "add_todo",
+        "update_todo",
+        "complete_todo",
+        "log_journal",
+        "get_journal_entries",
+        "get_browser_history",
+        "generate_summary",
+        "get_suggestions"
+      ],
+      "denied_tools": [
+        "cleanup_*",
+        "delete_*"
+      ]
+    },
+    "system": {
+      "description": "システムジョブ（定期実行）",
+      "allowed_tools": [
+        "cleanup_*",
+        "import_*"
+      ],
+      "denied_tools": []
+    },
+    "admin": {
+      "description": "管理者（全権限）",
+      "allowed_tools": ["*"],
+      "denied_tools": []
+    }
+  }
+}

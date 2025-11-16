@@ -1,0 +1,22 @@
+name: get_todos
+command: scripts/todo/get_todos.sh
+description: TODOリストを取得する
+args_schema:
+  status:
+    type: string
+    required: false
+    enum: [all, pending, in_progress, done, archived]
+    default: all
+    description: TODOステータスフィルタ
+  limit:
+    type: int
+    required: false
+    default: 50
+    description: 取得件数上限
+output_format: json
+safety_tags:
+  - read_only
+timeout: 10
+rate_limit:
+  max_calls_per_hour: 600
+  max_calls_per_day: 10000

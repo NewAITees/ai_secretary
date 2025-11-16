@@ -1,0 +1,23 @@
+name: search_web
+command: scripts/info_collector/search_web.sh
+description: DuckDuckGo検索を実行し、結果を返す
+args_schema:
+  query:
+    type: string
+    required: true
+    pattern: "^.{1,200}$"
+    description: 検索クエリ（1-200文字）
+  limit:
+    type: int
+    required: false
+    default: 5
+    enum: [5, 10, 20]
+    description: 取得件数（5, 10, 20のいずれか）
+output_format: json
+safety_tags:
+  - network
+  - expensive
+timeout: 30
+rate_limit:
+  max_calls_per_hour: 60
+  max_calls_per_day: 500

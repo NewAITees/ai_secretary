@@ -7,6 +7,26 @@ Ollamaを活用したローカルAI秘書システム
 AI Secretaryは、Ollamaを活用してローカル環境で動作するAI秘書システムです。
 プライバシーを保護しながら、AIとの対話を通じて様々な業務を支援します。
 
+## アーキテクチャ原則
+
+### 1. 外部システムアクセス
+- すべての外部システム連携は **BASHコマンド経由** で実行
+- `src/bash_executor/` がホワイトリスト検証・引数サニタイズ・監査ログを担当
+- 認証情報は環境変数/設定ファイルで管理（コマンドライン引数での受け渡しを避ける）
+
+### 2. 非同期処理の方針
+- **Web API（FastAPI）では `asyncio` を使用しない** → すべて同期エンドポイント
+- スケジューラ・バックグラウンドジョブは別プロセス/スレッドで実行可能（Webリクエストと独立）
+- WSL内部の情報取得（ブラウザ履歴等）も別プロセスで実行OK
+
+### 3. プロンプト管理
+- System Promptは3ステージに分離して外部ファイル化
+  - `config/prompts/system_planner.txt`: 計画ステージ
+  - `config/prompts/system_executor.txt`: 実行ステージ
+  - `config/prompts/system_reviewer.txt`: レビューステージ
+
+詳細は [`plan/TODO.md`](plan/TODO.md) の「設計方針」セクションを参照。
+
 ## 機能
 
 - Ollamaとの対話（JSON形式レスポンスが基本）
@@ -122,6 +142,48 @@ ai_secretary/
 ├── pyproject.toml         # プロジェクト設定
 └── README.md              # このファイル
 ```
+
+## 定期削除・定期取り込み（P4）
+
+データ保持ポリシーを自動適用し、ブラウザ履歴などの定期取り込みを運用するスケジューラ機能を実装しました。
+
+### スケジューラの起動
+
+```bash
+# スケジューラを起動
+./scripts/cleanup/scheduler.sh start
+
+# スケジューラを停止
+./scripts/cleanup/scheduler.sh stop
+
+# スケジューラの状態確認
+./scripts/cleanup/scheduler.sh status
+```
+
+### ジョブ管理
+
+```bash
+# ジョブ一覧表示
+./scripts/cleanup/list_jobs.sh
+
+# 手動でジョブを実行（ドライラン）
+./scripts/cleanup/run_job.sh cleanup_logs --dry-run
+
+# 手動でジョブを実行（実行）
+./scripts/cleanup/run_job.sh cleanup_logs
+```
+
+### ジョブ定義ファイル
+
+ジョブ定義は `config/jobs/cleanup_jobs.json` で管理されています。
+
+### 監査ログDB初期化
+
+```bash
+./scripts/cleanup/init_cleanup_db.sh
+```
+
+詳細は [plan/P4_P8_P9_design.md](plan/P4_P8_P9_design.md) を参照。
 
 ## テスト
 
