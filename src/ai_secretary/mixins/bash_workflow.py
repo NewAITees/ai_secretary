@@ -156,31 +156,26 @@ class BashWorkflowMixin:
         schema = self._get_step3_json_schema()
 
         return (
-            "## Step 3: タスク達成度と回答の整合性を検証\n\n"
-            f"**ユーザーの質問**: {user_message}\n\n"
-            f"**実行したBASHコマンド**:\n{bash_summary}\n\n"
-            f"**生成した回答**: {response.get('text', '')}\n\n"
-            "### 検証項目\n"
-            "以下の3点を厳密に評価してください:\n\n"
-            "1. **BASHコマンドは正常に実行されましたか？**\n"
-            "   - すべてのコマンドのexit_codeが0か確認\n"
-            "   - エラーが発生していないか確認\n\n"
-            "2. **回答はBASHコマンドの実行結果を正しく反映していますか？**\n"
-            "   - 実行結果の内容が回答に含まれているか\n"
-            "   - 実行結果を無視していないか\n"
-            "   - 誤った情報を伝えていないか\n\n"
-            "3. **回答はユーザーの質問に適切に答えていますか？**\n"
-            "   - 質問の意図を正しく理解しているか\n"
-            "   - 必要な情報が全て含まれているか\n\n"
-            "### 応答形式\n"
-            "以下のJSONスキーマに厳密に従って応答してください:\n"
+            "# 【重要】検証タスク専用モード\n\n"
+            "あなたは今、検証タスク専用モードです。**通常の会話応答は一切不要です。**\n"
+            "以下の検証JSONのみを出力してください。\n\n"
+            "## 検証対象\n\n"
+            f"- **ユーザーの質問**: {user_message}\n"
+            f"- **実行したBASHコマンド**:\n{bash_summary}\n"
+            f"- **生成した回答**: {response.get('text', '')}\n\n"
+            "## 検証項目（すべてYESで合格）\n\n"
+            "1. BASHコマンドは正常に実行されたか？（exit_code=0、エラーなし）\n"
+            "2. 回答はBASH実行結果を正しく反映しているか？（結果を無視していないか）\n"
+            "3. 回答はユーザーの質問に適切に答えているか？（質問の意図を理解しているか）\n\n"
+            "## 【必須】出力フォーマット\n\n"
+            "以下のJSON形式**のみ**を出力してください。他のフィールド（text, bashActions, speakerUuid等）は**絶対に含めないでください**。\n\n"
             f"```json\n{schema}```\n\n"
-            "**重要事項**:\n"
-            "- `success` は**すべての検証項目が合格**した場合のみ `true`\n"
-            "- `reason` には検証結果の詳細な説明を記載\n"
-            "- `suggestion` は失敗時のみ具体的な改善提案を記載（成功時は空文字 \"\"）\n"
-            "- COEIROINKフィールドは**一切含めないでください**\n"
-            "- JSON以外のテキストは一切出力しないでください\n"
+            "## 出力例\n\n"
+            "**合格例**:\n"
+            '```json\n{"success": true, "reason": "すべての検証項目が合格", "suggestion": ""}```\n\n'
+            "**不合格例**:\n"
+            '```json\n{"success": false, "reason": "回答が実行結果を無視している", "suggestion": "実行結果の内容を回答に含めてください"}```\n\n'
+            "**繰り返し**: JSON形式のみ出力してください。他のテキストやフィールドは一切不要です。\n"
         )
 
     def _process_bash_actions(self, actions: list) -> list:
@@ -334,6 +329,9 @@ class BashWorkflowMixin:
 
         # 検証結果を履歴から削除（次回に影響させない）
         self.conversation_history.pop()
+
+        # デバッグ: 検証レスポンスの全体を出力
+        self.logger.debug(f"BASH Step 3: Raw verification response: {verification}")
 
         self.logger.info(
             f"BASH Step 3: Verification result - success: {verification.get('success', False)}"
