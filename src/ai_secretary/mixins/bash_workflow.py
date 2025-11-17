@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from ..system_prompt_loader import SystemPromptLoader
+
 
 class BashWorkflowMixin:
     def _build_bash_instruction(self) -> str:
@@ -21,27 +23,12 @@ class BashWorkflowMixin:
         except Exception:
             commands_preview = "ls, pwd, cat, mkdir, git, uv, など"
 
-        return (
-            "## BASHコマンド実行機能\n\n"
-            "ファイル操作、情報取得、外部ツール呼び出しが必要な場合、bashActionsフィールドを使用してください。\n\n"
-            "### 利用可能なコマンド（抜粋）\n"
-            f"{commands_preview}\n\n"
-            "### 応答例\n"
-            "```json\n"
-            "{\n"
-            '  "text": "現在のディレクトリを確認します。",\n'
-            '  "bashActions": [\n'
-            '    {"command": "pwd", "reason": "現在のディレクトリを確認"}\n'
-            "  ],\n"
-            '  "speakerUuid": "...",\n'
-            "  ...\n"
-            "}\n"
-            "```\n\n"
-            "### 制約事項\n"
-            "- ホワイトリストに登録されたコマンドのみ実行可能\n"
-            "- タイムアウトは30秒です\n"
-            f"- ルートディレクトリ外への移動は制限されています（root: {self.bash_executor.root_dir}）\n"
-            "- 危険なコマンド（rm -rf、chmod 777など）は実行できません\n"
+        # 外部ファイルからプロンプトテンプレートを読み込み
+        loader = SystemPromptLoader()
+        return loader.format(
+            "bash/layer0_bash_instruction.txt",
+            commands_preview=commands_preview,
+            root_dir=self.bash_executor.root_dir,
         )
 
     # =========================================================
@@ -112,24 +99,13 @@ class BashWorkflowMixin:
         result_context = self._format_bash_results(bash_results)
         schema = self._get_step2_json_schema()
 
-        return (
-            "## Step 2: BASH実行結果を踏まえた回答生成\n\n"
-            f"**ユーザーの質問**: {user_message}\n\n"
-            f"**BASH実行結果**:\n```\n{result_context}\n```\n\n"
-            "### 指示\n"
-            "上記のBASH実行結果を**必ず確認**し、その内容を踏まえてユーザーの質問に適切に回答してください。\n\n"
-            "### 応答のポイント\n"
-            "- 実行結果の要点をわかりやすく説明する\n"
-            "- エラーが発生した場合は、エラー内容を説明し対処法を提案する\n"
-            "- 実行成功時は、結果の意味をユーザーにわかりやすく伝える\n"
-            "- 実行結果を無視せず、必ず言及する\n\n"
-            "### 応答形式\n"
-            "以下のJSONスキーマに厳密に従って応答してください:\n"
-            f"```json\n{schema}```\n\n"
-            "**重要事項**:\n"
-            "- `bashActions` フィールドは**含めないでください**（Step 2では不要）\n"
-            "- 必ずすべてのCOEIROINKフィールドを含めてください\n"
-            "- JSON以外のテキストは一切出力しないでください\n"
+        # 外部ファイルからプロンプトテンプレートを読み込み
+        loader = SystemPromptLoader()
+        return loader.format(
+            "bash/layer1_step2_response.txt",
+            user_message=user_message,
+            result_context=result_context,
+            schema=schema,
         )
 
     def _build_step3_prompt(
@@ -146,36 +122,44 @@ class BashWorkflowMixin:
         Returns:
             Step 3用のシステムプロンプト
         """
-        bash_summary = "\n".join([
-            f"- コマンド: `{r['command']}`, "
-            f"終了コード: {r['result']['exit_code'] if r['result'] else 'エラー'}, "
-            f"エラー: {r.get('error', 'なし')}"
-            for r in bash_results
-        ])
+        # BASH実行結果の詳細なサマリー（stdout/stderr含む）
+        bash_summary_parts = []
+        for i, r in enumerate(bash_results, 1):
+            part = f"【コマンド{i}】\n"
+            part += f"  コマンド: `{r['command']}`\n"
 
+            if r['result']:
+                part += f"  終了コード: {r['result']['exit_code']}\n"
+
+                stdout = r['result'].get('stdout', '').strip()
+                stderr = r['result'].get('stderr', '').strip()
+
+                if stdout:
+                    part += f"  標準出力:\n{stdout}\n"
+                else:
+                    part += f"  標準出力: (なし)\n"
+
+                if stderr:
+                    part += f"  標準エラー:\n{stderr}\n"
+                else:
+                    part += f"  標準エラー: (なし)\n"
+            else:
+                part += f"  実行結果: エラー\n"
+                part += f"  エラー詳細: {r.get('error', '不明なエラー')}\n"
+
+            bash_summary_parts.append(part)
+
+        bash_summary = "\n".join(bash_summary_parts)
         schema = self._get_step3_json_schema()
 
-        return (
-            "# 【重要】検証タスク専用モード\n\n"
-            "あなたは今、検証タスク専用モードです。**通常の会話応答は一切不要です。**\n"
-            "以下の検証JSONのみを出力してください。\n\n"
-            "## 検証対象\n\n"
-            f"- **ユーザーの質問**: {user_message}\n"
-            f"- **実行したBASHコマンド**:\n{bash_summary}\n"
-            f"- **生成した回答**: {response.get('text', '')}\n\n"
-            "## 検証項目（すべてYESで合格）\n\n"
-            "1. BASHコマンドは正常に実行されたか？（exit_code=0、エラーなし）\n"
-            "2. 回答はBASH実行結果を正しく反映しているか？（結果を無視していないか）\n"
-            "3. 回答はユーザーの質問に適切に答えているか？（質問の意図を理解しているか）\n\n"
-            "## 【必須】出力フォーマット\n\n"
-            "以下のJSON形式**のみ**を出力してください。他のフィールド（text, bashActions, speakerUuid等）は**絶対に含めないでください**。\n\n"
-            f"```json\n{schema}```\n\n"
-            "## 出力例\n\n"
-            "**合格例**:\n"
-            '```json\n{"success": true, "reason": "すべての検証項目が合格", "suggestion": ""}```\n\n'
-            "**不合格例**:\n"
-            '```json\n{"success": false, "reason": "回答が実行結果を無視している", "suggestion": "実行結果の内容を回答に含めてください"}```\n\n'
-            "**繰り返し**: JSON形式のみ出力してください。他のテキストやフィールドは一切不要です。\n"
+        # 外部ファイルからプロンプトテンプレートを読み込み
+        loader = SystemPromptLoader()
+        return loader.format(
+            "bash/layer2_step3_verification.txt",
+            user_message=user_message,
+            bash_summary=bash_summary,
+            response_text=response.get('text', ''),
+            schema=schema,
         )
 
     def _process_bash_actions(self, actions: list) -> list:

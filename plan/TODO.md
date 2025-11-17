@@ -39,12 +39,12 @@
 - [x] **P1** - #2 TODOリスト操作（既存DBとAPIに小規模テーブル追加で着手可能）
 - [x] **P2** - #3 「今日やったこと」記録（lifelog-systemのログ設計を流用できる）
 - [x] **P3** - #7 チャット履歴保存（Pythonベースの自動保存機能として実装完了）
-- [ ] **P4** - #8 定期削除処理（jobスケジューラ追加とポリシー定義で完結）+ ブラウザ履歴定期取り込み
+- [x] **P4** - #8 定期削除処理（スケジューラとポリシー実装済み、残: 承認フロー/テスト）
 - [x] **P5** - #6 日次サマリー生成（LLMベースの自然言語サマリー生成機能として実装完了）
 - [x] **P6** - #1 ウェブ履歴のDB格納（Phase 1完了：Brave履歴インポート・重複排除・テスト通過）
 - [x] **P7** - #10 ネット検索・RSS・ニュース統合機能（完了：DuckDuckGo検索・RSS・ニュース収集・AI要約・レビュー対応完了）
-- [ ] **P8** - #4 AI秘書の機能アクセス設計（権限情報整理とAPI化で規模中）
-- [ ] **P9** - #5 履歴を元にした提案（推論ロジックと評価ループ構築が必要）
+- [x] **P8** - #4 AI秘書の機能アクセス設計（権限付きツールレイヤー/監査実装済み）
+- [x] **P9** - #5 履歴を元にした提案（履歴統合・提案生成パイプライン実装済み、評価系は未着手）
 - [ ] **P10** - #9 能動会話の高度化（対話制御の刷新で最も複雑）
 
 以下、各タスクの詳細と調査メモ。
@@ -305,33 +305,27 @@ messages = session.messages  # パース済みメッセージリスト
 - [ ] セッションメタデータ拡張（モデル名、推論時間など）
 - [ ] 暗号化機能検討（機密情報を含む会話の保護）
 
-### [#8 / P4] 履歴や音声などのファイルを定期削除する
+### [#8 / P4] 履歴や音声などのファイルを定期削除する（Phase 1実装完了）
 
 **タスクリスト:**
-- [ ] データ保持期間ポリシーの定義
-- [ ] 削除対象ファイルの判定ロジック実装
-- [ ] BASH削除スクリプト作成（`./scripts/cleanup_old_files.sh --days 30`）
-- [ ] スケジューラー機能実装（cronまたはPythonベース）
-- [ ] **ブラウザ履歴の定期取り込みジョブ実装**（P6から移動）
-- [ ] 削除前アーカイブ機能の検討・実装
-- [ ] 監査ログ機能実装
-- [ ] ユーザー確認フローの検討
+- [x] データ保持期間ポリシーの定義（`config/jobs/cleanup_jobs.json`に保持日数・アクションを明示）
+- [x] 削除対象ファイルの判定ロジック実装（`scripts/cleanup/cleanup_files.sh`でmtime判定、`cleanup_db.sh`で日付カラム判定）
+- [x] BASH削除スクリプト作成（`scripts/cleanup/cleanup_files.sh`, `scripts/cleanup/cleanup_db.sh`）
+- [x] スケジューラー機能実装（`scripts/cleanup/scheduler.py` + `scheduler.sh` + `config/jobs/cleanup_jobs.json`）
+- [x] **ブラウザ履歴の定期取り込みジョブ実装**（`scripts/browser/import_brave_history.sh`をジョブ登録、1時間ごと/200件）
+- [x] 削除前アーカイブ機能の検討・実装（`--archive`で`data/archive/`へgzip保存）
+- [x] 監査ログ機能実装（`cleanup_jobs`テーブル + `logs/scheduler_audit.log`）
+- [ ] ユーザー確認フローの検討（ドライラン結果の確認/承認UIは未実装）
 - [ ] テストコード作成
 
-**外部システムアクセス方針:**
-AI秘書はBASHコマンド経由で削除スクリプトを実行する。cronジョブとして登録する場合もBASHスクリプトを用いる。
+**実装内容 (2025-11-17反映):**
+- `config/jobs/cleanup_jobs.json` にログ/音声/collected_info削除とBrave取り込みジョブを定義。
+- `scripts/cleanup/` に `cleanup_files.sh` / `cleanup_db.sh` / `run_job.sh` / `list_jobs.sh` / `scheduler.py` / `scheduler.sh` / `init_cleanup_db.sh` を実装し、`cleanup_jobs`テーブルへ監査ログを書き込み。
+- `scripts/browser/import_brave_history.sh` を定期ジョブ化（1時間ごと、limit=200）。
 
-**調査メモ:**
-`lifelog-system`にデーモンとスケジューラが既に存在するため、同等のジョブ登録方式を流用できる可能性あり。
-
-**P6連携:**
-ブラウザ履歴の定期取り込みもこのスケジューラーで管理する。例: 1時間ごとに`./scripts/browser/import_brave_history.sh --limit 100`を実行。
-
-**P7連携（2025-11-15追加）:**
-情報収集機能の定期実行・定期削除もこのスケジューラーで管理する。
-- **定期収集ジョブ**: 1日1回、`./scripts/info_collector/collect_rss.sh --all`でRSS収集、`./scripts/info_collector/collect_news.sh --all`でニュース収集
-- **定期削除ジョブ**: 1日1回、`InfoCollectorRepository.delete_old_info(days=30)`で30日以前のデータを削除
-- **実装**: `src/info_collector/repository.py`に`delete_old_info()`メソッド実装済み、REST APIエンドポイント`DELETE /api/info/cleanup?days=30`も利用可能
+**残課題メモ:**
+- ジョブ定義には `scripts/cleanup/cleanup_browser_raw.sh` が含まれるがスクリプト本体が未実装のため、追加実装またはジョブ削除が必要。
+- ユーザー確認フロー/自動テストは未着手。
 
 ---
 
@@ -704,45 +698,43 @@ AI秘書はBASHコマンド経由で検索・収集を実行する。結果はJS
 
 ---
 
-### [#4 / P8] AI秘書が各種機能にアクセスする方法を設計する
+### [#4 / P8] AI秘書が各種機能にアクセスする方法を設計する（最小実装完了）
 
 **タスクリスト:**
-- [ ] AIエージェント用APIレイヤー設計
-- [ ] 権限管理仕様の策定
-- [ ] ツール呼び出しAPIの実装
-- [ ] プロンプトエンジニアリング（各機能の利用ケース設計）
-- [ ] `subprocess`経由のBASHコマンド実行基盤実装
-- [ ] レート制限機能実装
-- [ ] 監査ログ機能実装
-- [ ] 外部サービス連携の安全装置実装
-- [ ] テストコード作成
+- [x] AIエージェント用APIレイヤー設計（`/api/tools/execute`, `/api/tools/list`を追加）
+- [x] 権限管理仕様の策定（`config/tools/capabilities.json`でrole別許可/拒否を明文化）
+- [x] ツール呼び出しAPIの実装（FastAPIルート + `ToolExecutor`）
+- [x] プロンプトエンジニアリング（各ツールYAMLに説明/入力制約を定義）
+- [x] `subprocess`経由のBASHコマンド実行基盤実装（`BashScriptExecutor`をToolExecutorに統合）
+- [x] レート制限機能実装（`tool_audit`を用いたRateLimiter）
+- [x] 監査ログ機能実装（`tool_audit`テーブル、呼び出し記録）
+- [x] 外部サービス連携の安全装置実装（ホワイトリスト/引数スキーマ/ロールベースチェック）
+- [x] テストコード作成（`scripts/tools/test_tool_executor.sh`でAPI/権限制御/監査を確認）
 
-**外部システムアクセス方針:**
-すべての外部機能はBASHコマンド経由で実行可能にする。AI秘書は`subprocess`モジュールでコマンドを呼び出し、結果を解析する統一インターフェースを持つ。
-
-**調査メモ:**
-FastAPI層（`src/server/app.py`）はシンプルな`/api/chat`のみ。将来のツール呼び出しAPIを追加する設計作業が必要。
+**実装内容:**
+- `src/ai_secretary/tool_executor.py` に ToolRegistry/CapabilityManager/ToolExecutor/ToolAuditLogger/RateLimiter を実装し、`BashScriptExecutor`経由でスクリプトを実行。
+- `config/tools/*.yaml` に `search_web` / `get_todos` / `cleanup_logs` / `generate_suggestions` を登録。
+- `src/server/routes/tools.py` でAPIを公開、監査ログは `data/ai_secretary.db` の `tool_audit` に記録。
 
 ---
 
-### [#5 / P9] AI秘書が履歴を受け取り提案できるようにする
+### [#5 / P9] AI秘書が履歴を受け取り提案できるようにする（最小実装完了、評価/学習は未）
 
 **タスクリスト:**
-- [ ] 履歴統合仕様の策定（ウェブ/TODO/日次ログ等）
-- [ ] 履歴要約ストリーム設計
-- [ ] BASH履歴取得スクリプト作成（`./scripts/get_recent_history.sh --type web --limit 100`）
-- [ ] 提案生成アルゴリズム設計
-- [ ] LLMプロンプトテンプレート作成
-- [ ] 重複提案防止機構実装
-- [ ] ユーザーフィードバック学習機能設計・実装
-- [ ] 評価フロー構築
-- [ ] テストコード作成
+- [x] 履歴統合仕様の策定（`scripts/history/get_recent_history.sh`でweb/todo/journal/info/chatを正規化）
+- [x] 履歴要約ストリーム設計（期間/タグフィルタ + 正規化JSONをLLM前処理に供給）
+- [x] BASH履歴取得スクリプト作成（`scripts/history/get_recent_history.sh`）
+- [x] 提案生成アルゴリズム設計（LLMプロンプト + hash重複判定、`generate_suggestions.sh`）
+- [x] LLMプロンプトテンプレート作成（`config/prompts/suggestion_*.txt`）
+- [x] 重複提案防止機構実装（`suggestions.hash` UNIQUE、生成時にskip）
+- [ ] ユーザーフィードバック学習機能設計・実装（`/api/suggestions/{id}/feedback`で保存まで、学習/スコア反映は未）
+- [ ] 評価フロー構築（オフライン評価・品質指標は未）
+- [x] テストコード作成（`scripts/history/test_suggestions.sh`で履歴取得/提案API/ToolExecutor経由を確認）
 
-**外部システムアクセス方針:**
-AI秘書はBASHコマンド経由で履歴取得を実行する。結果はJSON形式で受け取る。
-
-**調査メモ:**
-提案ロジックや学習フローは未定義。履歴統合とプロンプトテンプレートの設計が大きな作業となる。
+**実装内容:**
+- `scripts/history/init_suggestions_db.sh` で `suggestions` テーブルを作成し、`generate_suggestions.sh` が重複判定後に保存。
+- `scripts/history/get_recent_history.sh` でブラウザ/TODO/ジャーナル/収集情報/チャットを統合取得。
+- `src/server/routes/suggestions.py` に `/api/suggestions` (GET/feedback/dismiss) を実装、ToolExecutor経由でも `generate_suggestions` を実行可能。
 
 ---
 
@@ -763,4 +755,4 @@ AI秘書はBASHコマンド経由で履歴取得を実行する。結果はJSON�
 会話の素材取得（天気情報、ニュースなど）はBASHコマンド経由で実行する（例: `./scripts/get_weather.sh`、`./scripts/get_news_headlines.sh`）。
 
 **調査メモ:**
-`src/ai_secretary/scheduler.py`と`prompt_templates.py`が既存の能動会話機能。ここを大幅改修する必要があるため最下位優先。
+`src/ai_secretary/scheduler.py`と`prompt_templates.py`が既存の能動会話機能。ここを大幅改修する必要があるため最下位優先。詳細設計は`plan/P10_PROACTIVE_CONVERSATION_PLAN.md`参照。
