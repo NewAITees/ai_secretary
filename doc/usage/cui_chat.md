@@ -69,6 +69,16 @@ uv run python scripts/cui_chat.py --log-level DEBUG --no-audio
 uv run python scripts/cui_chat.py --session-id abc-123-def --no-audio
 ```
 
+### `--auto-approve-bash`
+
+BASHコマンドを自動承認します（テスト用、注意して使用）。
+
+```bash
+uv run python scripts/cui_chat.py --auto-approve-bash --no-audio
+```
+
+**⚠️ 警告**: このオプションを使用すると、AIが提案するすべてのBASHコマンドが自動的に実行されます。テスト環境以外では使用しないでください。
+
 ## 対話コマンド
 
 ### 終了コマンド
@@ -81,6 +91,38 @@ uv run python scripts/cui_chat.py --session-id abc-123-def --no-audio
 ### リセットコマンド
 
 - `reset` - 会話履歴をリセットして新規セッションを開始
+
+## 3段階BASHフロー
+
+CUI版でもWeb版と同じ3段階BASHフロー（計画→実行→検証）が利用できます。
+
+### BASH承認の流れ
+
+AIがBASHコマンドの実行を提案すると、以下のようなプロンプトが表示されます：
+
+```
+============================================================
+🔧 BASH コマンド実行の承認が必要です
+============================================================
+理由: 現在の日付を取得
+コマンド: date +%Y-%m-%d
+============================================================
+実行を承認しますか？ (y/n):
+```
+
+- `y` または `yes`: コマンドを実行
+- `n` または `no`: コマンドをスキップ
+- `Ctrl+C` または `Ctrl+D`: 承認を中断してスキップ
+
+### 自動承認モード（テスト用）
+
+`--auto-approve-bash` オプションを使用すると、すべてのBASHコマンドが自動的に承認されます。
+
+```bash
+uv run python scripts/cui_chat.py --no-audio --auto-approve-bash
+```
+
+**注意**: 本番環境では使用せず、テストやCI/CD環境でのみ使用してください。
 
 ## 使用例
 
@@ -111,20 +153,40 @@ AI秘書を終了します。
 echo "こんにちは" | uv run python scripts/cui_chat.py --no-audio | grep "AI:"
 ```
 
-### 3. スクリプトからの呼び出し
+### 3. BASH承認フローの使用例
+
+```bash
+$ uv run python scripts/cui_chat.py --no-audio
+You: 今日の日付を教えて
+
+============================================================
+🔧 BASH コマンド実行の承認が必要です
+============================================================
+理由: 現在の日付を取得
+コマンド: date +%Y-%m-%d
+============================================================
+実行を承認しますか？ (y/n): y
+✓ 承認されました。コマンドを実行します...
+
+AI: 今日の日付は2025-11-17です。
+
+You: exit
+```
+
+### 4. スクリプトからの呼び出し（自動承認）
 
 ```bash
 #!/bin/bash
-# AI秘書に自動で質問するスクリプト
+# AI秘書に自動で質問するスクリプト（BASH自動承認）
 
 questions=(
     "今日の日付は？"
-    "リマインダーはありますか？"
+    "現在のディレクトリは？"
 )
 
 for q in "${questions[@]}"; do
     echo "質問: $q"
-    echo "$q" | timeout 30 uv run python scripts/cui_chat.py --no-audio | grep "AI:"
+    echo "$q" | timeout 30 uv run python scripts/cui_chat.py --no-audio --auto-approve-bash | grep "AI:"
     echo ""
 done
 ```

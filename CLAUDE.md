@@ -57,6 +57,9 @@ uv run python scripts/cui_chat.py
 # CUI mode with custom model
 uv run python scripts/cui_chat.py --model llama3.1:8b --no-audio
 
+# CUI mode with auto-approve BASH commands (for testing only)
+uv run python scripts/cui_chat.py --no-audio --auto-approve-bash
+
 # Production build
 npm run build --prefix frontend
 uv run python -m uvicorn src.server.app:app --host 0.0.0.0 --port 8000

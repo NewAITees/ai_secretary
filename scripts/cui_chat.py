@@ -80,6 +80,12 @@ def parse_args():
         help="既存のセッションIDを指定して会話を再開",
     )
 
+    parser.add_argument(
+        "--auto-approve-bash",
+        action="store_true",
+        help="BASHコマンドを自動承認（テスト用、注意して使用）",
+    )
+
     return parser.parse_args()
 
 
@@ -92,6 +98,42 @@ def print_banner():
     print("会話履歴をリセットするには 'reset' を入力してください。")
     print("=" * 60)
     print()
+
+
+def cui_bash_approval_callback(command: str, reason: str) -> bool:
+    """
+    CUI版BASH承認コールバック
+
+    標準入力でユーザーに承認を求める
+
+    Args:
+        command: 実行するコマンド
+        reason: 実行理由
+
+    Returns:
+        承認された場合True、拒否された場合False
+    """
+    print("\n" + "=" * 60)
+    print("🔧 BASH コマンド実行の承認が必要です")
+    print("=" * 60)
+    print(f"理由: {reason}")
+    print(f"コマンド: {command}")
+    print("=" * 60)
+
+    while True:
+        try:
+            response = input("実行を承認しますか？ (y/n): ").strip().lower()
+            if response in ["y", "yes"]:
+                print("✓ 承認されました。コマンドを実行します...\n")
+                return True
+            elif response in ["n", "no"]:
+                print("✗ 拒否されました。コマンドをスキップします。\n")
+                return False
+            else:
+                print("'y' または 'n' を入力してください。")
+        except (EOFError, KeyboardInterrupt):
+            print("\n✗ 入力が中断されました。コマンドをスキップします。\n")
+            return False
 
 
 def main():
@@ -122,6 +164,18 @@ def main():
             )
         else:
             secretary = AISecretary(config=config)
+
+        # CUI版のBASH承認コールバックを設定
+        if secretary.bash_executor and secretary.bash_executor.validator:
+            if args.auto_approve_bash:
+                # 自動承認モード（テスト用）
+                secretary.bash_executor.validator.approval_callback = lambda cmd, reason: True
+                logger.warning("⚠️  BASH自動承認モードが有効です（テスト用）")
+                print("⚠️  BASH自動承認モードが有効です（すべてのコマンドが自動実行されます）\n")
+            else:
+                # 対話的承認モード
+                secretary.bash_executor.validator.approval_callback = cui_bash_approval_callback
+                logger.info("CUI版BASH承認コールバックを設定しました")
 
         # セッション読み込み
         if args.session_id:
